@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Research Chat</title>
+<style>
+:root{--bg:#FAFAF8;--sf:#FFF;--b1:#E4E2DA;--b2:#C8C5BB;--tx:#1A1917;--t2:#6B6860;--t3:#9B9890;--ac:#1A5CFF;--ub:#1A1917;--ut:#F5F4F0;--bb:#F0EFE9;--er:#C5341A;--r:12px;--f:'IBM Plex Sans',system-ui,sans-serif;--fm:'IBM Plex Mono',monospace}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{font-family:var(--f);background:var(--bg);color:var(--tx);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:1rem}
+.shell{width:100%;max-width:720px;background:var(--sf);border:1px solid var(--b1);border-radius:var(--r);display:flex;flex-direction:column;height:90vh;max-height:620px;overflow:hidden}
+.hdr{padding:12px 18px;border-bottom:1px solid var(--b1);display:flex;align-items:center;gap:10px;flex-shrink:0}
+.dot{width:8px;height:8px;border-radius:50%;background:#22C55E}
+.htitle{font-size:14px;font-weight:500}
+.hmodel{margin-left:auto;font-size:11px;color:var(--t2);font-family:var(--fm);background:var(--bg);border:1px solid var(--b1);padding:3px 9px;border-radius:20px}
+#eb{display:none;margin:0 18px 8px;padding:8px 12px;background:#FEF2EF;border:1px solid #F9C9BE;border-radius:8px;font-size:12px;color:var(--er);flex-shrink:0}
+.msgs{flex:1;overflow-y:auto;padding:18px;display:flex;flex-direction:column;gap:12px;scroll-behavior:smooth}
+.msgs::-webkit-scrollbar{width:4px}
+.msgs::-webkit-scrollbar-thumb{background:var(--b2);border-radius:4px}
+.msg{display:flex;flex-direction:column;max-width:82%}
+.msg.u{align-self:flex-end;align-items:flex-end}
+.msg.b{align-self:flex-start;align-items:flex-start}
+.ml{font-size:10px;color:var(--t3);margin-bottom:4px;text-transform:uppercase;letter-spacing:.06em;font-family:var(--fm)}
+.mb{padding:10px 14px;border-radius:var(--r);font-size:14px;line-height:1.6}
+.msg.u .mb{background:var(--ub);color:var(--ut);border-bottom-right-radius:3px}
+.msg.b .mb{background:var(--bb);color:var(--tx);border-bottom-left-radius:3px}
+.typing .mb{display:flex;align-items:center;gap:5px;padding:12px 16px}
+.d{width:6px;height:6px;border-radius:50%;background:var(--t3);animation:bc 1.2s infinite}
+.d:nth-child(2){animation-delay:.2s}.d:nth-child(3){animation-delay:.4s}
+@keyframes bc{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-6px)}}
+.iarea{padding:10px 14px;border-top:1px solid var(--b1);display:flex;gap:10px;align-items:flex-end;flex-shrink:0}
+#ui{flex:1;font-size:14px;font-family:var(--f);padding:10px 14px;border:1px solid var(--b2);border-radius:var(--r);resize:none;min-height:44px;max-height:120px;line-height:1.5;background:var(--sf);color:var(--tx);outline:none;transition:border-color .15s;overflow-y:auto}
+#ui:focus{border-color:var(--ac)}#ui::placeholder{color:var(--t3)}#ui:disabled{opacity:.5;cursor:not-allowed}
+#sb{width:44px;height:44px;border-radius:10px;border:none;background:var(--ac);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:opacity .15s,transform .1s}
+#sb:hover{opacity:.85}#sb:active{transform:scale(.95)}#sb:disabled{opacity:.35;cursor:not-allowed;transform:none}
+#sb svg{width:18px;height:18px;fill:none;stroke:#fff;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.ftr{padding:8px 18px;border-top:1px solid var(--b1);display:flex;gap:14px;align-items:center;background:var(--bg);flex-shrink:0}
+.st{font-size:11px;color:var(--t2)}.st span{font-weight:500;color:var(--tx);font-family:var(--fm)}
+#fb{margin-left:auto;font-size:12px;padding:5px 14px;border:1px solid var(--b2);border-radius:6px;background:var(--sf);cursor:pointer;font-family:var(--f);color:var(--tx)}
+#fb:hover{background:var(--b1)}#fb:disabled{opacity:.4;cursor:not-allowed}
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&display=swap');
+</style>
+</head>
+<body>
+<div class="shell">
+  <div class="hdr">
+    <div class="dot"></div>
+    <span class="htitle">Research Chat</span>
+    <span class="hmodel" id="mb">—</span>
+  </div>
+  <div id="eb"></div>
+  <div class="msgs" id="msgs">
+    <div class="msg b">
+      <div class="ml">assistant</div>
+      <div class="mb">Hello! I'm here to help. What would you like to discuss today?</div>
+    </div>
+  </div>
+  <div class="iarea">
+    <textarea id="ui" rows="1" placeholder="Type your message…" disabled></textarea>
+    <button id="sb" disabled>
+      <svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+    </button>
+  </div>
+  <div class="ftr">
+    <div class="st">Turns: <span id="tc">0</span></div>
+    <div class="st">Tokens: <span id="tk">0</span></div>
+    <div class="st">Model: <span id="am">—</span></div>
+    <button id="fb" disabled>Finish &amp; save →</button>
+  </div>
+</div>
+
+<script>
+// ── Read config from URL parameters ──────────────────────
+const p = new URLSearchParams(window.location.search);
+const ENDPOINTS = {
+  'gpt-4o':                   'https://api.openai.com/v1/chat/completions',
+  'gpt-4o-mini':              'https://api.openai.com/v1/chat/completions',
+  'gpt-4-turbo':              'https://api.openai.com/v1/chat/completions',
+  'grok-3':                   'https://api.x.ai/v1/chat/completions',
+  'grok-3-mini':              'https://api.x.ai/v1/chat/completions',
+  'claude-sonnet-4-20250514': 'https://api.anthropic.com/v1/messages'
+};
+
+const C = {
+  apiKey:       p.get('key')    || '',
+  model:        p.get('model')  || 'gpt-4o',
+  systemPrompt: p.get('system') || '',
+  maxTurns:     parseInt(p.get('turns')) || 0,
+  condition:    p.get('condition') || ''
+};
+C.endpoint = ENDPOINTS[C.model] || p.get('endpoint') || 'https://api.openai.com/v1/chat/completions';
+
+let hist = [], turns = 0, tokens = 0, busy = false;
+
+// ── DOM refs ──────────────────────────────────────────────
+const msgsEl = document.getElementById('msgs');
+const uiEl   = document.getElementById('ui');
+const sbEl   = document.getElementById('sb');
+const fbEl   = document.getElementById('fb');
+const tcEl   = document.getElementById('tc');
+const tkEl   = document.getElementById('tk');
+const amEl   = document.getElementById('am');
+const mbEl   = document.getElementById('mb');
+const ebEl   = document.getElementById('eb');
+
+// ── Init ──────────────────────────────────────────────────
+mbEl.textContent = C.model;
+amEl.textContent = C.model;
+
+if (C.apiKey) {
+  uiEl.disabled = false;
+  sbEl.disabled = false;
+  fbEl.disabled = false;
+  uiEl.focus();
+} else {
+  showErr('No API key provided. Check the URL parameters.');
+}
+
+// ── Helpers ───────────────────────────────────────────────
+function showErr(m) { ebEl.textContent = m; ebEl.style.display = m ? 'block' : 'none'; }
+function disableChat() { uiEl.disabled = true; sbEl.disabled = true; }
+
+function addMsg(role, text) {
+  const w = document.createElement('div'); w.className = 'msg ' + (role === 'user' ? 'u' : 'b');
+  const l = document.createElement('div'); l.className = 'ml'; l.textContent = role === 'user' ? 'you' : 'assistant';
+  const b = document.createElement('div'); b.className = 'mb'; b.textContent = text;
+  w.appendChild(l); w.appendChild(b); msgsEl.appendChild(w);
+  msgsEl.scrollTop = msgsEl.scrollHeight;
+}
+
+function showTyping() {
+  const w = document.createElement('div'); w.className = 'msg b typing'; w.id = 'ti';
+  const l = document.createElement('div'); l.className = 'ml'; l.textContent = 'assistant';
+  const b = document.createElement('div'); b.className = 'mb';
+  b.innerHTML = '<div class="d"></div><div class="d"></div><div class="d"></div>';
+  w.appendChild(l); w.appendChild(b); msgsEl.appendChild(w);
+  msgsEl.scrollTop = msgsEl.scrollHeight;
+}
+function removeTyping() { const e = document.getElementById('ti'); if (e) e.remove(); }
+
+// ── API call ──────────────────────────────────────────────
+async function callLLM(txt) {
+  const isAnth = C.model.startsWith('claude');
+  const msgs = hist.concat([{ role: 'user', content: txt }]);
+  let headers, body;
+
+  if (isAnth) {
+    headers = { 'Content-Type': 'application/json', 'x-api-key': C.apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' };
+    body = JSON.stringify({ model: C.model, max_tokens: 1024, messages: msgs, ...(C.systemPrompt && { system: C.systemPrompt }) });
+  } else {
+    headers = { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + C.apiKey };
+    const fm = C.systemPrompt ? [{ role: 'system', content: C.systemPrompt }].concat(msgs) : msgs;
+    body = JSON.stringify({ model: C.model, messages: fm, max_tokens: 1024 });
+  }
+
+  const r = await fetch(C.endpoint, { method: 'POST', headers, body });
+  if (!r.ok) { const e = await r.text(); throw new Error('API ' + r.status + ': ' + e.slice(0, 200)); }
+  const d = await r.json();
+  const text = isAnth ? (d.content?.[0]?.text || '') : (d.choices?.[0]?.message?.content || '');
+  const tok  = isAnth ? ((d.usage?.input_tokens || 0) + (d.usage?.output_tokens || 0)) : (d.usage?.total_tokens || Math.round((txt.length + text.length) / 4));
+  return { text, tok };
+}
+
+// ── Send ──────────────────────────────────────────────────
+async function send() {
+  const txt = uiEl.value.trim();
+  if (!txt || busy) return;
+  if (C.maxTurns > 0 && turns >= C.maxTurns) {
+    showErr('Maximum ' + C.maxTurns + ' exchanges reached. Please click "Finish & save".');
+    disableChat(); return;
+  }
+  busy = true; sbEl.disabled = true; showErr('');
+  uiEl.value = ''; uiEl.style.height = 'auto';
+  addMsg('user', txt); showTyping();
+  try {
+    const { text: reply, tok } = await callLLM(txt);
+    removeTyping(); addMsg('bot', reply);
+    hist.push({ role: 'user', content: txt });
+    hist.push({ role: 'assistant', content: reply });
+    turns++; tokens += tok;
+    tcEl.textContent = turns; tkEl.textContent = tokens;
+    postUpdate();
+    if (C.maxTurns > 0 && turns >= C.maxTurns) {
+      showErr('Maximum ' + C.maxTurns + ' exchanges reached. Please click "Finish & save".');
+      disableChat(); return;
+    }
+  } catch(e) { removeTyping(); showErr(e.message); }
+  busy = false; sbEl.disabled = false; uiEl.focus();
+}
+
+// ── Build payload ─────────────────────────────────────────
+function buildPayload() {
+  const conv = [];
+  for (let i = 0; i < hist.length; i += 2) {
+    conv.push({ turn: Math.floor(i / 2) + 1, user: hist[i]?.content || '', assistant: hist[i+1]?.content || '' });
+  }
+  return {
+    conversation: conv,
+    metadata: { model: C.model, systemPrompt: C.systemPrompt, condition: C.condition, totalTurns: turns, estimatedTokens: tokens, timestamp: new Date().toISOString() }
+  };
+}
+
+// ── postMessage to Qualtrics parent ──────────────────────
+function postUpdate() {
+  if (window.parent !== window) window.parent.postMessage({ type: 'llm_chat_update', data: buildPayload() }, '*');
+}
+
+// ── Finish ────────────────────────────────────────────────
+fbEl.addEventListener('click', () => {
+  const payload = buildPayload();
+  fbEl.textContent = '✓ Saved';
+  fbEl.style.background = '#ECFDF5'; fbEl.style.borderColor = '#6EE7B7'; fbEl.style.color = '#065F46';
+  fbEl.disabled = true; disableChat();
+  if (window.parent !== window) window.parent.postMessage({ type: 'llm_chat_finished', data: payload }, '*');
+});
+
+// ── Input UX ──────────────────────────────────────────────
+uiEl.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
+uiEl.addEventListener('input', () => { uiEl.style.height = 'auto'; uiEl.style.height = Math.min(uiEl.scrollHeight, 120) + 'px'; });
+sbEl.addEventListener('click', send);
+</script>
+</body>
+</html>
