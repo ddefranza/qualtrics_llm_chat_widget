@@ -71,14 +71,12 @@ body{font-family:var(--f);background:var(--bg);color:var(--tx);display:flex;flex
 </div>
 
 <script>
-// ── URL params: only non-sensitive values ─────────────────
-// model, turns, condition come from the URL.
-// apiKey and systemPrompt are NOT in the URL — they are sent
-// via postMessage from the Qualtrics JS tab after load,
-// avoiding URL-encoding issues and browser history exposure.
-const p = new URLSearchParams(window.location.search);
+// ── URL params: key, model, turns, condition (safe values) ─
+// System prompt is NOT in the URL. It arrives via postMessage
+// from the Qualtrics JS tab, avoiding encoding issues entirely.
+var p = new URLSearchParams(window.location.search);
 
-const ENDPOINTS = {
+var ENDPOINTS = {
   'gpt-4o':                   'https://api.openai.com/v1/chat/completions',
   'gpt-4o-mini':              'https://api.openai.com/v1/chat/completions',
   'gpt-4-turbo':              'https://api.openai.com/v1/chat/completions',
@@ -87,8 +85,8 @@ const ENDPOINTS = {
   'claude-sonnet-4-20250514': 'https://api.anthropic.com/v1/messages'
 };
 
-const C = {
-  apiKey:       '',
+var C = {
+  apiKey:       p.get('key')       || '',
   model:        p.get('model')     || 'gpt-4o',
   systemPrompt: '',
   maxTurns:     parseInt(p.get('turns')) || 0,
@@ -96,82 +94,57 @@ const C = {
 };
 C.endpoint = ENDPOINTS[C.model] || p.get('endpoint') || 'https://api.openai.com/v1/chat/completions';
 
-let hist = [], turns = 0, tokens = 0, busy = false;
+var hist = [], turns = 0, tokens = 0, busy = false;
+var systemPromptReceived = false;
 
 // ── DOM refs ──────────────────────────────────────────────
-const msgsEl = document.getElementById('msgs');
-const uiEl   = document.getElementById('ui');
-const sbEl   = document.getElementById('sb');
-const fbEl   = document.getElementById('fb');
-const tcEl   = document.getElementById('tc');
-const tkEl   = document.getElementById('tk');
-const amEl   = document.getElementById('am');
-const mbEl   = document.getElementById('mb');
-const ebEl   = document.getElementById('eb');
+var msgsEl = document.getElementById('msgs');
+var uiEl   = document.getElementById('ui');
+var sbEl   = document.getElementById('sb');
+var fbEl   = document.getElementById('fb');
+var tcEl   = document.getElementById('tc');
+var tkEl   = document.getElementById('tk');
+var amEl   = document.getElementById('am');
+var mbEl   = document.getElementById('mb');
+var ebEl   = document.getElementById('eb');
 
-// ── Show initial loading state ────────────────────────────
+// ── Helpers ───────────────────────────────────────────────
+function showErr(m) { ebEl.textContent = m; ebEl.style.display = m ? 'block' : 'none'; }
+function disableChat() { uiEl.disabled = true; sbEl.disabled = true; }
+function enableChat() { uiEl.disabled = false; sbEl.disabled = false; fbEl.disabled = false; showErr(''); uiEl.focus(); }
+
+// ── Init from URL params ──────────────────────────────────
+// Enable chat immediately if API key is present in URL.
+// System prompt defaults to '' and is updated via postMessage.
 mbEl.textContent = C.model;
 amEl.textContent = C.model;
-ebEl.textContent = 'Loading…';
-ebEl.style.display = 'block';
-ebEl.style.background = '#F0F4FF';
-ebEl.style.borderColor = '#C7D7FF';
-ebEl.style.color = '#1A5CFF';
 
-// ── Receive config from Qualtrics JS tab ──────────────────
-// The Qualtrics JS tab sends { type: 'llm_chat_config', config: {...} }
-// after the iframe fires the 'llm_chat_ready' message below.
+if (C.apiKey) {
+  enableChat();
+} else {
+  showErr('No API key found. Check the llm_api_key embedded data field.');
+}
+
+// ── Receive system prompt via postMessage ─────────────────
+// Qualtrics JS tab sends { type: 'llm_chat_config', config: { systemPrompt: '...' } }
+// This arrives after load and updates C.systemPrompt in place.
+// Because API calls are made on demand (not at load time), the
+// system prompt will always be set before the first message is sent.
 window.addEventListener('message', function(e) {
   if (!e.data || e.data.type !== 'llm_chat_config') return;
   var cfg = e.data.config;
-  if (cfg.apiKey)       C.apiKey       = cfg.apiKey;
-  if (cfg.systemPrompt) C.systemPrompt = cfg.systemPrompt;
-  if (cfg.model)      { C.model = cfg.model; C.endpoint = ENDPOINTS[C.model] || C.endpoint; }
-  if (cfg.maxTurns)     C.maxTurns     = parseInt(cfg.maxTurns) || 0;
-  if (cfg.condition)    C.condition    = cfg.condition;
-  mbEl.textContent = C.model;
-  amEl.textContent = C.model;
-  if (C.apiKey) {
-    ebEl.style.display = 'none';
-    uiEl.disabled = false;
-    sbEl.disabled = false;
-    fbEl.disabled = false;
-    uiEl.focus();
-  } else {
-    showErr('No API key received. Check your Survey Flow embedded data fields.');
-  }
+  if (cfg.systemPrompt !== undefined) C.systemPrompt = cfg.systemPrompt;
+  if (cfg.condition)                  C.condition    = cfg.condition;
+  systemPromptReceived = true;
 });
 
-// ── Tell parent we are ready to receive config ────────────
-// Small delay ensures the parent listener is registered first.
-setTimeout(function() {
-  if (window.parent !== window) {
-    window.parent.postMessage({ type: 'llm_chat_ready' }, '*');
-  } else {
-    // Running standalone (not in iframe) — show config hint
-    showErr('Running outside Qualtrics. Pass ?key=sk-xxx&model=gpt-4o to test standalone.');
-    // Also accept URL key for standalone testing only
-    var standaloneKey = p.get('key');
-    if (standaloneKey) {
-      C.apiKey = standaloneKey;
-      C.systemPrompt = p.get('system') || '';
-      ebEl.style.display = 'none';
-      uiEl.disabled = false; sbEl.disabled = false; fbEl.disabled = false;
-      uiEl.focus();
-    }
-  }
-}, 200);
-
-// ── Helpers ───────────────────────────────────────────────
-function showErr(m) {
-  ebEl.textContent = m;
-  ebEl.style.display = m ? 'block' : 'none';
-  ebEl.style.background = '#FEF2EF';
-  ebEl.style.borderColor = '#F9C9BE';
-  ebEl.style.color = '#C5341A';
+// ── Signal to parent that we are ready ───────────────────
+// Qualtrics JS tab listens for this and immediately sends config.
+if (window.parent !== window) {
+  window.parent.postMessage({ type: 'llm_chat_ready' }, '*');
 }
-function disableChat() { uiEl.disabled = true; sbEl.disabled = true; }
 
+// ── Message rendering ─────────────────────────────────────
 function addMsg(role, text) {
   var w = document.createElement('div'); w.className = 'msg ' + (role === 'user' ? 'u' : 'b');
   var l = document.createElement('div'); l.className = 'ml'; l.textContent = role === 'user' ? 'you' : 'assistant';
@@ -203,12 +176,12 @@ async function callLLM(txt) {
     var fm = C.systemPrompt ? [{ role: 'system', content: C.systemPrompt }].concat(msgs) : msgs;
     body = JSON.stringify({ model: C.model, messages: fm, max_tokens: 1024 });
   }
-  var r = await fetch(C.endpoint, { method: 'POST', headers, body });
+  var r = await fetch(C.endpoint, { method: 'POST', headers: headers, body: body });
   if (!r.ok) { var err = await r.text(); throw new Error('API ' + r.status + ': ' + err.slice(0, 200)); }
   var d = await r.json();
   var text = isAnth ? (d.content?.[0]?.text || '') : (d.choices?.[0]?.message?.content || '');
   var tok  = isAnth ? ((d.usage?.input_tokens || 0) + (d.usage?.output_tokens || 0)) : (d.usage?.total_tokens || Math.round((txt.length + text.length) / 4));
-  return { text, tok };
+  return { text: text, tok: tok };
 }
 
 // ── Send ──────────────────────────────────────────────────
@@ -242,7 +215,7 @@ async function send() {
 function buildPayload() {
   var conv = [];
   for (var i = 0; i < hist.length; i += 2) {
-    conv.push({ turn: Math.floor(i / 2) + 1, user: hist[i]?.content || '', assistant: hist[i+1]?.content || '' });
+    conv.push({ turn: Math.floor(i/2)+1, user: hist[i]?.content || '', assistant: hist[i+1]?.content || '' });
   }
   return { conversation: conv, metadata: { model: C.model, systemPrompt: C.systemPrompt, condition: C.condition, totalTurns: turns, estimatedTokens: tokens, timestamp: new Date().toISOString() } };
 }
