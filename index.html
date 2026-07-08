@@ -141,6 +141,8 @@ if (C.apiKey) {
 // Routing (useAssistant) is decided here once config is known.
 window.addEventListener('message', function(e) {
   if (!e.data || e.data.type !== 'llm_chat_config') return;
+  // Stop the ready signal retry loop
+  if (typeof readyInterval !== 'undefined') clearInterval(readyInterval);
   var cfg = e.data.config;
   if (cfg.model)                      C.model        = cfg.model;
   if (cfg.systemPrompt !== undefined) C.systemPrompt = cfg.systemPrompt;
@@ -154,8 +156,14 @@ window.addEventListener('message', function(e) {
   setBadge();
 });
 
+// Keep signalling ready until config arrives.
+// The Qualtrics JS tab listener may not be registered yet when
+// the iframe first loads, so we retry every 500ms for up to 10s.
 if (window.parent !== window) {
-  window.parent.postMessage({ type: 'llm_chat_ready' }, '*');
+  var readyInterval = setInterval(function() {
+    window.parent.postMessage({ type: 'llm_chat_ready' }, '*');
+  }, 500);
+  // Stop retrying once config arrives (handled in postMessage listener)
 }
 
 // ── Message rendering ─────────────────────────────────────
