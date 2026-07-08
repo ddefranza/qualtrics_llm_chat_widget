@@ -5,11 +5,11 @@ Qualtrics.SurveyEngine.addOnReady(function() {
 
   var frame = document.getElementById('llm-chat-frame');
 
-  // System prompt is read here from the Qualtrics pipe and sent to
-  // the iframe via postMessage — NOT via the URL — so special
-  // characters, apostrophes, and long text all arrive intact.
-  var systemPrompt = '${e://Field/llm_system_prompt}';
-  var condition    = '${e://Field/condition}';
+  // The |js pipe filter tells Qualtrics to escape the value before
+  // substituting it, so apostrophes and quotes in the system prompt
+  // never break the JavaScript string.
+  var systemPrompt = "${e://Field/llm_system_prompt|js}";
+  var condition    = "${e://Field/condition|js}";
 
   window.addEventListener('message', function(e) {
 
