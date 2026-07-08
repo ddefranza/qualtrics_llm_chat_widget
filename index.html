@@ -86,19 +86,18 @@ var ENDPOINTS = {
 };
 
 var C = {
-  apiKey:       p.get('key')       || '',
-  model:        '',                        // arrives via postMessage, not URL
-  assistantId:  '',                        // arrives via postMessage, not URL
-  systemPrompt: '',                        // arrives via postMessage, not URL
+  apiKey:       p.get('key')          || '',
+  model:        '',                        // arrives via postMessage
+  assistantId:  p.get('aid')          || '', // short param name avoids blank corruption
+  systemPrompt: '',                        // arrives via postMessage
   maxTurns:     parseInt(p.get('turns')) || 0,
-  condition:    p.get('condition') || ''
+  condition:    p.get('condition')    || ''
 };
 
-// ── Routing decided after postMessage config arrives ──────
-// useAssistant is set to true in the postMessage handler if
-// assistantId is a non-empty asst_xxx string.
-// Defaulting false here means chat completions runs as fallback.
-var useAssistant = false;
+// ── Routing: check URL first, postMessage can update later ─
+// assistantId comes from URL param 'aid' (short name, less likely
+// to be corrupted). postMessage can also set/override it.
+var useAssistant = C.assistantId.startsWith('asst_');
 var threadId     = null;  // persists across turns for Assistants API
 
 C.endpoint = 'https://api.openai.com/v1/chat/completions'; // updated via postMessage once model is known
