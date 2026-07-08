@@ -65,15 +65,15 @@ body{font-family:var(--f);background:var(--bg);color:var(--tx);display:flex;flex
   <div class="ftr">
     <div class="st">Turns: <span id="tc">0</span></div>
     <div class="st">Tokens: <span id="tk">0</span></div>
-    <div class="st">Model: <span id="am">—</span></div>
+    <div class="st">Mode: <span id="am">—</span></div>
     <button id="fb" disabled>Finish &amp; save →</button>
   </div>
 </div>
 
 <script>
-// ── URL params: key, model, turns, condition (safe values) ─
-// System prompt is NOT in the URL. It arrives via postMessage
-// from the Qualtrics JS tab, avoiding encoding issues entirely.
+// ── URL params ────────────────────────────────────────────
+// key, model, assistant_id, turns, condition come from URL.
+// systemPrompt arrives via postMessage from Qualtrics JS tab.
 var p = new URLSearchParams(window.location.search);
 
 var ENDPOINTS = {
@@ -86,16 +86,23 @@ var ENDPOINTS = {
 };
 
 var C = {
-  apiKey:       p.get('key')       || '',
-  model:        p.get('model')     || 'gpt-4o',
+  apiKey:       p.get('key')          || '',
+  model:        p.get('model')        || '',
+  assistantId:  p.get('assistant_id') || '',
   systemPrompt: '',
   maxTurns:     parseInt(p.get('turns')) || 0,
-  condition:    p.get('condition') || ''
+  condition:    p.get('condition')    || ''
 };
+
+// ── Routing: assistant path vs chat completions path ──────
+// If assistantId is set → use Assistants API (thread-based).
+// Otherwise → use chat completions with model + systemPrompt.
+var useAssistant = !!C.assistantId;
+var threadId     = null;  // persists across turns for Assistants API
+
 C.endpoint = ENDPOINTS[C.model] || p.get('endpoint') || 'https://api.openai.com/v1/chat/completions';
 
 var hist = [], turns = 0, tokens = 0, busy = false;
-var systemPromptReceived = false;
 
 // ── DOM refs ──────────────────────────────────────────────
 var msgsEl = document.getElementById('msgs');
@@ -111,35 +118,32 @@ var ebEl   = document.getElementById('eb');
 // ── Helpers ───────────────────────────────────────────────
 function showErr(m) { ebEl.textContent = m; ebEl.style.display = m ? 'block' : 'none'; }
 function disableChat() { uiEl.disabled = true; sbEl.disabled = true; }
-function enableChat() { uiEl.disabled = false; sbEl.disabled = false; fbEl.disabled = false; showErr(''); uiEl.focus(); }
+function enableChat()  { uiEl.disabled = false; sbEl.disabled = false; fbEl.disabled = false; showErr(''); uiEl.focus(); }
 
-// ── Init from URL params ──────────────────────────────────
-// Enable chat immediately if API key is present in URL.
-// System prompt defaults to '' and is updated via postMessage.
-mbEl.textContent = C.model;
-amEl.textContent = C.model;
+function setBadge() {
+  var label = useAssistant ? ('asst: ' + C.assistantId.slice(-6)) : (C.model || '—');
+  mbEl.textContent = label;
+  amEl.textContent = useAssistant ? 'assistant' : 'completion';
+}
 
+// ── Init ──────────────────────────────────────────────────
+setBadge();
 if (C.apiKey) {
   enableChat();
 } else {
   showErr('No API key found. Check the llm_api_key embedded data field.');
 }
 
-// ── Receive system prompt via postMessage ─────────────────
-// Qualtrics JS tab sends { type: 'llm_chat_config', config: { systemPrompt: '...' } }
-// This arrives after load and updates C.systemPrompt in place.
-// Because API calls are made on demand (not at load time), the
-// system prompt will always be set before the first message is sent.
+// ── Receive systemPrompt via postMessage ──────────────────
+// Only used in chat completions path. Assistants API ignores it
+// since the system prompt is baked into the Assistant definition.
 window.addEventListener('message', function(e) {
   if (!e.data || e.data.type !== 'llm_chat_config') return;
   var cfg = e.data.config;
   if (cfg.systemPrompt !== undefined) C.systemPrompt = cfg.systemPrompt;
   if (cfg.condition)                  C.condition    = cfg.condition;
-  systemPromptReceived = true;
 });
 
-// ── Signal to parent that we are ready ───────────────────
-// Qualtrics JS tab listens for this and immediately sends config.
 if (window.parent !== window) {
   window.parent.postMessage({ type: 'llm_chat_ready' }, '*');
 }
@@ -163,8 +167,76 @@ function showTyping() {
 }
 function removeTyping() { var e = document.getElementById('ti'); if (e) e.remove(); }
 
-// ── API call ──────────────────────────────────────────────
-async function callLLM(txt) {
+// ── PATH A: Assistants API (thread-based) ─────────────────
+// Flow per turn:
+//   1. Create thread on first turn (reuse threadId on subsequent turns)
+//   2. Add user message to thread
+//   3. Create a run
+//   4. Poll run status until completed
+//   5. Retrieve latest assistant message
+async function callAssistant(txt) {
+  var headers = {
+    'Content-Type':    'application/json',
+    'Authorization':   'Bearer ' + C.apiKey,
+    'OpenAI-Beta':     'assistants=v2'
+  };
+
+  // Step 1: create thread on first turn only
+  if (!threadId) {
+    var tRes = await fetch('https://api.openai.com/v1/threads', {
+      method: 'POST', headers: headers, body: JSON.stringify({})
+    });
+    if (!tRes.ok) { var e = await tRes.text(); throw new Error('Thread create ' + tRes.status + ': ' + e.slice(0,200)); }
+    var tData = await tRes.json();
+    threadId = tData.id;
+  }
+
+  // Step 2: add user message to thread
+  var mRes = await fetch('https://api.openai.com/v1/threads/' + threadId + '/messages', {
+    method: 'POST', headers: headers,
+    body: JSON.stringify({ role: 'user', content: txt })
+  });
+  if (!mRes.ok) { var e = await mRes.text(); throw new Error('Message add ' + mRes.status + ': ' + e.slice(0,200)); }
+
+  // Step 3: create a run
+  var rRes = await fetch('https://api.openai.com/v1/threads/' + threadId + '/runs', {
+    method: 'POST', headers: headers,
+    body: JSON.stringify({ assistant_id: C.assistantId })
+  });
+  if (!rRes.ok) { var e = await rRes.text(); throw new Error('Run create ' + rRes.status + ': ' + e.slice(0,200)); }
+  var run = await rRes.json();
+  var runId = run.id;
+
+  // Step 4: poll until completed (max 60s)
+  var attempts = 0;
+  while (attempts < 60) {
+    await new Promise(function(r) { setTimeout(r, 1000); });
+    var sRes = await fetch('https://api.openai.com/v1/threads/' + threadId + '/runs/' + runId, {
+      headers: headers
+    });
+    if (!sRes.ok) { var e = await sRes.text(); throw new Error('Run poll ' + sRes.status + ': ' + e.slice(0,200)); }
+    var status = await sRes.json();
+    if (status.status === 'completed') break;
+    if (status.status === 'failed' || status.status === 'cancelled' || status.status === 'expired') {
+      throw new Error('Run ' + status.status + ': ' + (status.last_error && status.last_error.message || 'unknown error'));
+    }
+    attempts++;
+  }
+  if (attempts >= 60) throw new Error('Run timed out after 60 seconds.');
+
+  // Step 5: retrieve latest assistant message
+  var listRes = await fetch('https://api.openai.com/v1/threads/' + threadId + '/messages?limit=1&order=desc', {
+    headers: headers
+  });
+  if (!listRes.ok) { var e = await listRes.text(); throw new Error('Message list ' + listRes.status + ': ' + e.slice(0,200)); }
+  var listData = await listRes.json();
+  var reply = listData.data && listData.data[0] && listData.data[0].content && listData.data[0].content[0] && listData.data[0].content[0].text && listData.data[0].content[0].text.value || '';
+  var tok = (status && status.usage && status.usage.total_tokens) || Math.round((txt.length + reply.length) / 4);
+  return { text: reply, tok: tok };
+}
+
+// ── PATH B: Chat completions (existing logic) ─────────────
+async function callCompletion(txt) {
   var isAnth = C.model.startsWith('claude');
   var msgs = hist.concat([{ role: 'user', content: txt }]);
   var headers, body;
@@ -184,6 +256,11 @@ async function callLLM(txt) {
   return { text: text, tok: tok };
 }
 
+// ── Router ────────────────────────────────────────────────
+async function callLLM(txt) {
+  return useAssistant ? callAssistant(txt) : callCompletion(txt);
+}
+
 // ── Send ──────────────────────────────────────────────────
 async function send() {
   var txt = uiEl.value.trim();
@@ -198,6 +275,8 @@ async function send() {
   try {
     var res = await callLLM(txt);
     removeTyping(); addMsg('bot', res.text);
+    // Store history for chat completions path (Assistants API maintains
+    // its own thread history server-side, but we store locally for payload)
     hist.push({ role: 'user', content: txt });
     hist.push({ role: 'assistant', content: res.text });
     turns++; tokens += res.tok;
@@ -217,7 +296,20 @@ function buildPayload() {
   for (var i = 0; i < hist.length; i += 2) {
     conv.push({ turn: Math.floor(i/2)+1, user: hist[i]?.content || '', assistant: hist[i+1]?.content || '' });
   }
-  return { conversation: conv, metadata: { model: C.model, systemPrompt: C.systemPrompt, condition: C.condition, totalTurns: turns, estimatedTokens: tokens, timestamp: new Date().toISOString() } };
+  return {
+    conversation: conv,
+    metadata: {
+      mode:            useAssistant ? 'assistant' : 'completion',
+      model:           C.model        || 'assistant',
+      assistantId:     C.assistantId  || '',
+      threadId:        threadId        || '',
+      systemPrompt:    C.systemPrompt  || '',
+      condition:       C.condition,
+      totalTurns:      turns,
+      estimatedTokens: tokens,
+      timestamp:       new Date().toISOString()
+    }
+  };
 }
 
 function postUpdate() {
