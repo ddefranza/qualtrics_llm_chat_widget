@@ -86,21 +86,22 @@ var ENDPOINTS = {
 };
 
 var C = {
-  apiKey:       p.get('key')          || '',
-  model:        p.get('model')        || '',
-  assistantId:  p.get('assistant_id') || '',
-  systemPrompt: '',
+  apiKey:       p.get('key')       || '',
+  model:        '',                        // arrives via postMessage, not URL
+  assistantId:  '',                        // arrives via postMessage, not URL
+  systemPrompt: '',                        // arrives via postMessage, not URL
   maxTurns:     parseInt(p.get('turns')) || 0,
-  condition:    p.get('condition')    || ''
+  condition:    p.get('condition') || ''
 };
 
-// ── Routing: assistant path vs chat completions path ──────
-// If assistantId is set → use Assistants API (thread-based).
-// Otherwise → use chat completions with model + systemPrompt.
-var useAssistant = !!C.assistantId;
+// ── Routing decided after postMessage config arrives ──────
+// useAssistant is set to true in the postMessage handler if
+// assistantId is a non-empty asst_xxx string.
+// Defaulting false here means chat completions runs as fallback.
+var useAssistant = false;
 var threadId     = null;  // persists across turns for Assistants API
 
-C.endpoint = ENDPOINTS[C.model] || p.get('endpoint') || 'https://api.openai.com/v1/chat/completions';
+C.endpoint = 'https://api.openai.com/v1/chat/completions'; // updated via postMessage once model is known
 
 var hist = [], turns = 0, tokens = 0, busy = false;
 
@@ -134,14 +135,23 @@ if (C.apiKey) {
   showErr('No API key found. Check the llm_api_key embedded data field.');
 }
 
-// ── Receive systemPrompt via postMessage ──────────────────
-// Only used in chat completions path. Assistants API ignores it
-// since the system prompt is baked into the Assistant definition.
+// ── Receive config via postMessage ───────────────────────
+// assistantId and systemPrompt both arrive here — never via URL —
+// so blank fields can't corrupt URL parameters.
+// Routing (useAssistant) is decided here once config is known.
 window.addEventListener('message', function(e) {
   if (!e.data || e.data.type !== 'llm_chat_config') return;
   var cfg = e.data.config;
+  if (cfg.model)                      C.model        = cfg.model;
   if (cfg.systemPrompt !== undefined) C.systemPrompt = cfg.systemPrompt;
   if (cfg.condition)                  C.condition    = cfg.condition;
+  if (cfg.assistantId && cfg.assistantId.startsWith('asst_')) {
+    C.assistantId = cfg.assistantId;
+    useAssistant  = true;
+  }
+  // Update endpoint now that model is known
+  C.endpoint = ENDPOINTS[C.model] || 'https://api.openai.com/v1/chat/completions';
+  setBadge();
 });
 
 if (window.parent !== window) {
