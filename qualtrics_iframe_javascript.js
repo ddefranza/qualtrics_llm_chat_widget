@@ -4,18 +4,27 @@ Qualtrics.SurveyEngine.addOnReady(function() {
 
   var frame = document.getElementById('llm-chat-frame');
 
-  // System prompt sent via postMessage (not URL) to avoid encoding issues.
-  // Only used in chat completions path — ignored when assistantId is set.
+  // model, assistantId, and systemPrompt all sent via postMessage.
+  // None of these go in the URL — a blank value in any of them
+  // would corrupt the URL and strip all other parameters.
+  // Only key, turns, and condition are in the URL (always non-blank).
+  var model        = "${e://Field/llm_model|js}";
+  var assistantId  = "${e://Field/llm_assistant_id|js}";
   var systemPrompt = "${e://Field/llm_system_prompt|js}";
   var condition    = "${e://Field/condition|js}";
 
   window.addEventListener('message', function(e) {
 
-    // Step 1: iframe ready — send config
+    // Step 1: iframe ready — send full config via postMessage
     if (e.data && e.data.type === 'llm_chat_ready') {
       frame.contentWindow.postMessage({
         type: 'llm_chat_config',
-        config: { systemPrompt: systemPrompt, condition: condition }
+        config: {
+          model:        model,
+          assistantId:  assistantId,
+          systemPrompt: systemPrompt,
+          condition:    condition
+        }
       }, '*');
     }
 
