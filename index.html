@@ -71,8 +71,13 @@ body{font-family:var(--f);background:var(--bg);color:var(--tx);display:flex;flex
 </div>
 
 <script>
-// ── Read config from URL parameters ──────────────────────
+// ── URL params: only non-sensitive values ─────────────────
+// model, turns, condition come from the URL.
+// apiKey and systemPrompt are NOT in the URL — they are sent
+// via postMessage from the Qualtrics JS tab after load,
+// avoiding URL-encoding issues and browser history exposure.
 const p = new URLSearchParams(window.location.search);
+
 const ENDPOINTS = {
   'gpt-4o':                   'https://api.openai.com/v1/chat/completions',
   'gpt-4o-mini':              'https://api.openai.com/v1/chat/completions',
@@ -83,9 +88,9 @@ const ENDPOINTS = {
 };
 
 const C = {
-  apiKey:       p.get('key')    || '',
-  model:        p.get('model')  || 'gpt-4o',
-  systemPrompt: p.get('system') || '',
+  apiKey:       '',
+  model:        p.get('model')     || 'gpt-4o',
+  systemPrompt: '',
   maxTurns:     parseInt(p.get('turns')) || 0,
   condition:    p.get('condition') || ''
 };
@@ -104,67 +109,111 @@ const amEl   = document.getElementById('am');
 const mbEl   = document.getElementById('mb');
 const ebEl   = document.getElementById('eb');
 
-// ── Init ──────────────────────────────────────────────────
+// ── Show initial loading state ────────────────────────────
 mbEl.textContent = C.model;
 amEl.textContent = C.model;
+ebEl.textContent = 'Loading…';
+ebEl.style.display = 'block';
+ebEl.style.background = '#F0F4FF';
+ebEl.style.borderColor = '#C7D7FF';
+ebEl.style.color = '#1A5CFF';
 
-if (C.apiKey) {
-  uiEl.disabled = false;
-  sbEl.disabled = false;
-  fbEl.disabled = false;
-  uiEl.focus();
-} else {
-  showErr('No API key provided. Check the URL parameters.');
-}
+// ── Receive config from Qualtrics JS tab ──────────────────
+// The Qualtrics JS tab sends { type: 'llm_chat_config', config: {...} }
+// after the iframe fires the 'llm_chat_ready' message below.
+window.addEventListener('message', function(e) {
+  if (!e.data || e.data.type !== 'llm_chat_config') return;
+  var cfg = e.data.config;
+  if (cfg.apiKey)       C.apiKey       = cfg.apiKey;
+  if (cfg.systemPrompt) C.systemPrompt = cfg.systemPrompt;
+  if (cfg.model)      { C.model = cfg.model; C.endpoint = ENDPOINTS[C.model] || C.endpoint; }
+  if (cfg.maxTurns)     C.maxTurns     = parseInt(cfg.maxTurns) || 0;
+  if (cfg.condition)    C.condition    = cfg.condition;
+  mbEl.textContent = C.model;
+  amEl.textContent = C.model;
+  if (C.apiKey) {
+    ebEl.style.display = 'none';
+    uiEl.disabled = false;
+    sbEl.disabled = false;
+    fbEl.disabled = false;
+    uiEl.focus();
+  } else {
+    showErr('No API key received. Check your Survey Flow embedded data fields.');
+  }
+});
+
+// ── Tell parent we are ready to receive config ────────────
+// Small delay ensures the parent listener is registered first.
+setTimeout(function() {
+  if (window.parent !== window) {
+    window.parent.postMessage({ type: 'llm_chat_ready' }, '*');
+  } else {
+    // Running standalone (not in iframe) — show config hint
+    showErr('Running outside Qualtrics. Pass ?key=sk-xxx&model=gpt-4o to test standalone.');
+    // Also accept URL key for standalone testing only
+    var standaloneKey = p.get('key');
+    if (standaloneKey) {
+      C.apiKey = standaloneKey;
+      C.systemPrompt = p.get('system') || '';
+      ebEl.style.display = 'none';
+      uiEl.disabled = false; sbEl.disabled = false; fbEl.disabled = false;
+      uiEl.focus();
+    }
+  }
+}, 200);
 
 // ── Helpers ───────────────────────────────────────────────
-function showErr(m) { ebEl.textContent = m; ebEl.style.display = m ? 'block' : 'none'; }
+function showErr(m) {
+  ebEl.textContent = m;
+  ebEl.style.display = m ? 'block' : 'none';
+  ebEl.style.background = '#FEF2EF';
+  ebEl.style.borderColor = '#F9C9BE';
+  ebEl.style.color = '#C5341A';
+}
 function disableChat() { uiEl.disabled = true; sbEl.disabled = true; }
 
 function addMsg(role, text) {
-  const w = document.createElement('div'); w.className = 'msg ' + (role === 'user' ? 'u' : 'b');
-  const l = document.createElement('div'); l.className = 'ml'; l.textContent = role === 'user' ? 'you' : 'assistant';
-  const b = document.createElement('div'); b.className = 'mb'; b.textContent = text;
+  var w = document.createElement('div'); w.className = 'msg ' + (role === 'user' ? 'u' : 'b');
+  var l = document.createElement('div'); l.className = 'ml'; l.textContent = role === 'user' ? 'you' : 'assistant';
+  var b = document.createElement('div'); b.className = 'mb'; b.textContent = text;
   w.appendChild(l); w.appendChild(b); msgsEl.appendChild(w);
   msgsEl.scrollTop = msgsEl.scrollHeight;
 }
 
 function showTyping() {
-  const w = document.createElement('div'); w.className = 'msg b typing'; w.id = 'ti';
-  const l = document.createElement('div'); l.className = 'ml'; l.textContent = 'assistant';
-  const b = document.createElement('div'); b.className = 'mb';
+  var w = document.createElement('div'); w.className = 'msg b typing'; w.id = 'ti';
+  var l = document.createElement('div'); l.className = 'ml'; l.textContent = 'assistant';
+  var b = document.createElement('div'); b.className = 'mb';
   b.innerHTML = '<div class="d"></div><div class="d"></div><div class="d"></div>';
   w.appendChild(l); w.appendChild(b); msgsEl.appendChild(w);
   msgsEl.scrollTop = msgsEl.scrollHeight;
 }
-function removeTyping() { const e = document.getElementById('ti'); if (e) e.remove(); }
+function removeTyping() { var e = document.getElementById('ti'); if (e) e.remove(); }
 
 // ── API call ──────────────────────────────────────────────
 async function callLLM(txt) {
-  const isAnth = C.model.startsWith('claude');
-  const msgs = hist.concat([{ role: 'user', content: txt }]);
-  let headers, body;
-
+  var isAnth = C.model.startsWith('claude');
+  var msgs = hist.concat([{ role: 'user', content: txt }]);
+  var headers, body;
   if (isAnth) {
     headers = { 'Content-Type': 'application/json', 'x-api-key': C.apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' };
     body = JSON.stringify({ model: C.model, max_tokens: 1024, messages: msgs, ...(C.systemPrompt && { system: C.systemPrompt }) });
   } else {
     headers = { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + C.apiKey };
-    const fm = C.systemPrompt ? [{ role: 'system', content: C.systemPrompt }].concat(msgs) : msgs;
+    var fm = C.systemPrompt ? [{ role: 'system', content: C.systemPrompt }].concat(msgs) : msgs;
     body = JSON.stringify({ model: C.model, messages: fm, max_tokens: 1024 });
   }
-
-  const r = await fetch(C.endpoint, { method: 'POST', headers, body });
-  if (!r.ok) { const e = await r.text(); throw new Error('API ' + r.status + ': ' + e.slice(0, 200)); }
-  const d = await r.json();
-  const text = isAnth ? (d.content?.[0]?.text || '') : (d.choices?.[0]?.message?.content || '');
-  const tok  = isAnth ? ((d.usage?.input_tokens || 0) + (d.usage?.output_tokens || 0)) : (d.usage?.total_tokens || Math.round((txt.length + text.length) / 4));
+  var r = await fetch(C.endpoint, { method: 'POST', headers, body });
+  if (!r.ok) { var err = await r.text(); throw new Error('API ' + r.status + ': ' + err.slice(0, 200)); }
+  var d = await r.json();
+  var text = isAnth ? (d.content?.[0]?.text || '') : (d.choices?.[0]?.message?.content || '');
+  var tok  = isAnth ? ((d.usage?.input_tokens || 0) + (d.usage?.output_tokens || 0)) : (d.usage?.total_tokens || Math.round((txt.length + text.length) / 4));
   return { text, tok };
 }
 
 // ── Send ──────────────────────────────────────────────────
 async function send() {
-  const txt = uiEl.value.trim();
+  var txt = uiEl.value.trim();
   if (!txt || busy) return;
   if (C.maxTurns > 0 && turns >= C.maxTurns) {
     showErr('Maximum ' + C.maxTurns + ' exchanges reached. Please click "Finish & save".');
@@ -174,11 +223,11 @@ async function send() {
   uiEl.value = ''; uiEl.style.height = 'auto';
   addMsg('user', txt); showTyping();
   try {
-    const { text: reply, tok } = await callLLM(txt);
-    removeTyping(); addMsg('bot', reply);
+    var res = await callLLM(txt);
+    removeTyping(); addMsg('bot', res.text);
     hist.push({ role: 'user', content: txt });
-    hist.push({ role: 'assistant', content: reply });
-    turns++; tokens += tok;
+    hist.push({ role: 'assistant', content: res.text });
+    turns++; tokens += res.tok;
     tcEl.textContent = turns; tkEl.textContent = tokens;
     postUpdate();
     if (C.maxTurns > 0 && turns >= C.maxTurns) {
@@ -189,26 +238,22 @@ async function send() {
   busy = false; sbEl.disabled = false; uiEl.focus();
 }
 
-// ── Build payload ─────────────────────────────────────────
+// ── Build & post payload ──────────────────────────────────
 function buildPayload() {
-  const conv = [];
-  for (let i = 0; i < hist.length; i += 2) {
+  var conv = [];
+  for (var i = 0; i < hist.length; i += 2) {
     conv.push({ turn: Math.floor(i / 2) + 1, user: hist[i]?.content || '', assistant: hist[i+1]?.content || '' });
   }
-  return {
-    conversation: conv,
-    metadata: { model: C.model, systemPrompt: C.systemPrompt, condition: C.condition, totalTurns: turns, estimatedTokens: tokens, timestamp: new Date().toISOString() }
-  };
+  return { conversation: conv, metadata: { model: C.model, systemPrompt: C.systemPrompt, condition: C.condition, totalTurns: turns, estimatedTokens: tokens, timestamp: new Date().toISOString() } };
 }
 
-// ── postMessage to Qualtrics parent ──────────────────────
 function postUpdate() {
   if (window.parent !== window) window.parent.postMessage({ type: 'llm_chat_update', data: buildPayload() }, '*');
 }
 
 // ── Finish ────────────────────────────────────────────────
-fbEl.addEventListener('click', () => {
-  const payload = buildPayload();
+fbEl.addEventListener('click', function() {
+  var payload = buildPayload();
   fbEl.textContent = '✓ Saved';
   fbEl.style.background = '#ECFDF5'; fbEl.style.borderColor = '#6EE7B7'; fbEl.style.color = '#065F46';
   fbEl.disabled = true; disableChat();
@@ -216,8 +261,8 @@ fbEl.addEventListener('click', () => {
 });
 
 // ── Input UX ──────────────────────────────────────────────
-uiEl.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
-uiEl.addEventListener('input', () => { uiEl.style.height = 'auto'; uiEl.style.height = Math.min(uiEl.scrollHeight, 120) + 'px'; });
+uiEl.addEventListener('keydown', function(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
+uiEl.addEventListener('input', function() { uiEl.style.height = 'auto'; uiEl.style.height = Math.min(uiEl.scrollHeight, 120) + 'px'; });
 sbEl.addEventListener('click', send);
 </script>
 </body>
