@@ -89,10 +89,10 @@ var C = {
   apiKey:       p.get('key')          || '',
   model:        p.get('model')        || '',
   assistantId:  p.get('aid')          || '',
-  systemPrompt: p.get('sys')          || '',  // URL-encoded by Qualtrics, decoded by URLSearchParams
-  maxTurns:     parseInt(p.get('turns')) || 0,
   condition:    p.get('condition')    || '',
-  temperature:  parseFloat(p.get('temp')) || 0.3
+  maxTurns:     parseInt(p.get('turns')) || 0,
+  temperature:  parseFloat(p.get('temp')) || 0.3,
+  systemPrompt: ''  // loaded from prompts/{condition}.prompt
 };
 
 // ── Routing: check URL first, postMessage can update later ─
@@ -128,11 +128,39 @@ function setBadge() {
 }
 
 // ── Init ──────────────────────────────────────────────────
+// Set badges, then fetch the system prompt from prompts/{condition}.prompt
+// before enabling the chat so it is always set before turn 1.
+// Researchers create a new condition by adding a .prompt file to the
+// prompts/ folder and setting a matching condition label in Qualtrics.
 setBadge();
-if (C.apiKey) {
-  enableChat();
-} else {
+
+if (!C.apiKey) {
   showErr('No API key found. Check the llm_api_key embedded data field.');
+} else if (!C.condition) {
+  showErr('No condition set. Check the condition embedded data field in your Survey Flow.');
+} else {
+  ebEl.textContent = 'Loading…';
+  ebEl.style.display = 'block';
+  ebEl.style.background = '#F0F4FF';
+  ebEl.style.borderColor = '#C7D7FF';
+  ebEl.style.color = '#1A5CFF';
+
+  fetch('prompts/' + C.condition + '.prompt')
+    .then(function(r) {
+      if (!r.ok) throw new Error(
+        'Prompt file not found: prompts/' + C.condition + '.prompt (HTTP ' + r.status + '). ' +
+        'Check the file exists in your prompts/ folder and the condition name matches exactly.'
+      );
+      return r.text();
+    })
+    .then(function(text) {
+      C.systemPrompt = text.trim();
+      ebEl.style.display = 'none';
+      enableChat();
+    })
+    .catch(function(err) {
+      showErr(err.message);
+    });
 }
 
 // ── Receive config via postMessage ───────────────────────

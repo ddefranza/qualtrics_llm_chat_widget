@@ -2,52 +2,57 @@
 
 Embed a multi-turn LLM chat interface inside a Qualtrics survey, with full conversation data recorded in embedded data fields for export and analysis.
 
-Built for researchers who want to study human–AI interaction within a controlled survey context. Supports multiple API backends and experimental conditions, with the ability to vary model behaviour across participants via randomisation.
+Built for researchers who want to study human–AI interaction within a controlled survey context. Model behaviour is controlled by plain-text prompt files stored in a `prompts/` folder — no code editing required to add or change conditions.
 
 ---
 
 ## How it works
 
-A chat interface is hosted on GitHub Pages and embedded in a Qualtrics survey via an `<iframe>`. Qualtrics pipes configuration values (API key, assistant ID, turn limit, condition label) into the iframe URL at render time. Values that could be blank in some conditions (model name, system prompt) are sent to the iframe via `postMessage` from the Qualtrics JS tab rather than the URL, preventing blank parameters from corrupting the URL string. When the participant finishes the chat, the hosted page sends the full conversation back to Qualtrics via `postMessage`, where a JS listener writes it to embedded data fields that appear in the survey export.
+```
+Qualtrics Survey Flow
+│
+├── Randomiser
+│   ├── Branch A  →  condition = control
+│   ├── Branch B  →  condition = sycophantic
+│   └── Branch C  →  condition = disagreeable
+│
+├── Shared Embedded Data
+│   └── llm_api_key, llm_model, llm_max_turns, llm_temperature
+│
+└── Chat question block
+        │
+        ▼
+    iframe → GitHub Pages/index.html?condition=sycophantic&...
+                    │
+                    ├── fetches prompts/sycophantic.prompt
+                    ├── runs chat with that system prompt
+                    └── postMessage → Qualtrics JS tab → embedded data fields
+```
 
-```
-Qualtrics Survey
-│
-├── Survey Flow: Randomiser
-│   ├── Branch A → condition = A, llm_assistant_id = asst_xxx
-│   ├── Branch B → condition = B, llm_assistant_id = asst_xxx
-│   └── Branch C → condition = C, llm_assistant_id = asst_xxx
-│
-├── Survey Flow: Shared Embedded Data
-│   └── llm_api_key, llm_max_turns, + output fields
-│
-├── Question: iframe → GitHub Pages/index.html
-│   │         ?key=...&aid=...&turns=...&condition=...
-│   │
-│   └── postMessage (llm_chat_finished)
-│           ↓
-└── Question JS tab: writes data to embedded fields → advances survey
-```
+A chat interface is hosted on GitHub Pages and embedded via `<iframe>`. On load, the widget reads the `condition` URL parameter and fetches the matching `.prompt` file from the `prompts/` folder on the same domain. This text becomes the system prompt for every API call in that session. When the participant clicks "Finish & save", the full conversation is written to Qualtrics embedded data fields and the survey advances.
 
 ---
 
-## Two API paths
+## Repository structure
 
-The widget supports two modes selected automatically based on which fields are populated:
+```
+your-repo/
+├── index.html                  ← the chat widget (host on GitHub Pages)
+├── prompts/
+│   ├── control.prompt          ← balanced consultant persona
+│   ├── sycophantic.prompt      ← validating coach persona
+│   ├── disagreeable.prompt     ← critical analyst persona
+│   ├── pirate.prompt           ← example: pirate dialect
+│   ├── aristotle.prompt        ← example: Aristotelian philosopher
+│   └── limerick.prompt         ← example: responds only in limericks
+└── README.md
+```
 
-### Prompt mode (recommended for behavioural conditions)
-Uses the OpenAI **Responses API** with a pre-created **Prompt** object. The system prompt and model settings are baked into the Prompt in the OpenAI dashboard — the widget passes only the prompt ID. A Conversation object is created on the first turn and reused for subsequent turns, maintaining context server-side.
+**Adding a new condition** is a two-step process:
+1. Create `prompts/{condition_name}.prompt` — plain text, any content
+2. Add a Randomiser branch in Qualtrics that sets `condition = {condition_name}`
 
-This replaces the deprecated Assistants API (sunset August 26, 2026). The mapping is: Assistants → Prompts, Threads → Conversations, Runs → Responses. The new API is simpler — a single `POST /v1/responses` call per turn replaces the old 5-step create-thread/add-message/create-run/poll/retrieve flow.
-
-**Use this when:** you need consistent, distinct behavioural profiles across experimental conditions.
-
-### Completion mode (for baseline or multi-model conditions)
-Uses the standard chat completions API (OpenAI, xAI/Grok, Anthropic, or any OpenAI-compatible endpoint including custom/RAG backends). The model and system prompt are passed via postMessage from the Qualtrics JS tab. Conversation history is maintained client-side.
-
-**Use this when:** you are testing different models, using a custom or fine-tuned backend, or running a standard unmodified model condition.
-
-**Routing logic:** if the `aid` URL parameter starts with `prompt_` → Prompt/Responses API mode. If it starts with `asst_` → legacy Assistants API (deprecated, avoid for new studies). Otherwise → completion mode. The two modes can be mixed across conditions in the same study.
+No code changes needed.
 
 ---
 
@@ -55,7 +60,8 @@ Uses the standard chat completions API (OpenAI, xAI/Grok, Anthropic, or any Open
 
 | File | Purpose |
 |---|---|
-| `index.html` | The chat widget — host this on GitHub Pages |
+| `index.html` | The chat widget — host on GitHub Pages |
+| `prompts/*.prompt` | Plain-text system prompts, one per condition |
 | `qualtrics_iframe_embed.html` | iframe snippet — paste into Qualtrics question body HTML |
 | `qualtrics_iframe_javascript.js` | postMessage listener — paste into Qualtrics question JS tab |
 
@@ -63,156 +69,158 @@ Uses the standard chat completions API (OpenAI, xAI/Grok, Anthropic, or any Open
 
 ## Setup
 
-### 1. (Prompt mode only) Create OpenAI Prompts
-
-The Assistants API was sunset on August 26, 2026. The replacement is the **Responses API**, which uses **Prompt** objects (created in the OpenAI dashboard) in place of Assistants, and **Conversation** objects in place of Threads.
-
-For each condition that requires a distinct behavioural profile:
-
-1. Go to [platform.openai.com](https://platform.openai.com) → Prompts (under the Explore menu)
-2. Create one Prompt per condition
-3. For each, set:
-   - **System instructions**: your condition-specific persona or instruction prompt
-   - **Model**: `gpt-4-turbo` or later (recommended — follows instructions more reliably at lower temperatures)
-   - **Temperature**: `0.3` (lower temperature produces more consistent within-condition behaviour)
-   - **Top P**: `0.9`
-4. Copy each Prompt ID (`prompt_xxxxxxxxxxxx`)
-
-> **Migrating from Assistants?** In the OpenAI dashboard, open each existing Assistant and click **"Create prompt"** to migrate its instructions automatically. Then replace the `asst_xxx` values in your Survey Flow with the new `prompt_xxx` IDs.
-
-> **Note on Prompt object longevity:** Reusable prompt objects are also on a deprecation timeline (scheduled shutdown November 30, 2026). OpenAI's long-term recommendation is to move system instructions into application code. For this widget that means using the completion mode path with `llm_system_prompt` passed via postMessage — which is already fully implemented. See the experimental design section for guidance on choosing between prompt mode and completion mode.
-
-### 2. Host the chat widget on GitHub Pages
+### 1. Host on GitHub Pages
 
 1. Create a GitHub repository
-2. Add `index.html` to the root
+2. Add `index.html` and the `prompts/` folder to the root
 3. Go to **Settings → Pages**, set source to `main` branch, root folder
 4. Your widget URL will be:
    ```
    https://YOUR-USERNAME.github.io/YOUR-REPO/index.html
    ```
-5. Test by visiting with parameters directly in a browser:
+5. Test a condition by visiting directly:
    ```
-   https://YOUR-USERNAME.github.io/YOUR-REPO/index.html?key=sk-xxx&aid=asst_xxx&turns=6&condition=test
+   https://YOUR-USERNAME.github.io/YOUR-REPO/index.html?key=sk-xxx&model=gpt-4o&condition=pirate&turns=6&temp=0.7
    ```
 
-### 3. Configure Qualtrics Survey Flow
+### 2. Configure Qualtrics Survey Flow
 
-#### Randomiser block (one branch per condition)
+#### Shared Embedded Data block (above the Randomiser)
 
-Each branch sets the fields that vary by condition:
+**Input fields — set values here:**
 
-**Prompt mode condition (Responses API):**
+| Field | Value | Notes |
+|---|---|---|
+| `llm_api_key` | `sk-...` | Your OpenAI API key |
+| `llm_model` | `gpt-4o` | Model name (see supported models below) |
+| `llm_max_turns` | `6` | Max exchanges per participant; blank = unlimited |
+| `llm_temperature` | `0.3` | 0–1; lower = more consistent behaviour |
 
-| Field | Value |
-|---|---|
-| `condition` | Your condition label (e.g. `A`, `treatment`, `control`) |
-| `llm_assistant_id` | `prompt_xxxxxxxxxxxx` for that condition |
-| `llm_model` | Model to use (e.g. `gpt-4-turbo`) — must match the model set in your Prompt definition |
-
-**Completion mode condition:**
-
-| Field | Value |
-|---|---|
-| `condition` | Your condition label |
-| `llm_assistant_id` | (leave blank) |
-| `llm_model` | e.g. `gpt-4-turbo`, `grok-3`, `claude-sonnet-4-20250514` |
-| `llm_system_prompt` | Your system prompt text (safe to include apostrophes — sent via postMessage with `\|js` filter) |
-
-#### Shared Embedded Data block (below Randomiser, above question block)
-
-**Input fields** (set values here):
+**Placeholder fields — declare blank, Randomiser overwrites:**
 
 | Field | Value |
 |---|---|
-| `llm_api_key` | Your API key |
-| `llm_max_turns` | Max exchanges per participant (leave blank for unlimited) |
+| `condition` | *(blank)* |
 
-**Output fields** (leave values blank — widget writes to these at runtime):
+**Output fields — declare blank, widget writes to these:**
 
-| Field | Contents |
+| Field |
+|---|
+| `chat_conversation_json` |
+| `chat_model` |
+| `chat_assistant_id` |
+| `chat_thread_id` |
+| `chat_total_turns` |
+| `chat_system_prompt` |
+| `chat_timestamp` |
+| `chat_condition` |
+| `chat_mode` |
+| `chat_temperature` |
+
+#### Randomiser block (below the shared block)
+
+Each branch sets only the fields that vary by condition:
+
+| Field | Value |
 |---|---|
-| `chat_conversation_json` | Full conversation as JSON array |
-| `chat_model` | Model name used |
-| `chat_assistant_id` | OpenAI Assistant ID used (if applicable) |
-| `chat_thread_id` | OpenAI thread ID (allows retrieval from OpenAI platform) |
-| `chat_total_turns` | Number of exchanges completed |
-| `chat_system_prompt` | System prompt used (completion mode only) |
-| `chat_timestamp` | ISO timestamp of conversation end |
-| `chat_condition` | Condition label assigned to this participant |
-| `chat_mode` | `assistant` or `completion` |
+| `condition` | Must match a `.prompt` filename exactly (e.g. `sycophantic`) |
 
-### 4. Add the chat question
+Optionally override per-condition:
 
-1. Add a **Text/Graphic** question where you want the chat to appear
+| Field | Value |
+|---|---|
+| `llm_model` | Override model for this condition only |
+| `llm_temperature` | Override temperature for this condition only |
+
+### 3. Add the chat question
+
+1. Add a **Text/Graphic** question where you want the chat
 2. Click `</>` **HTML source** → paste `qualtrics_iframe_embed.html`, substituting your GitHub URL:
    ```html
    <iframe
      id="llm-chat-frame"
-     src="https://YOUR-USERNAME.github.io/YOUR-REPO/index.html?key=${e://Field/llm_api_key}&aid=${e://Field/llm_assistant_id}&turns=${e://Field/llm_max_turns}&condition=${e://Field/condition}"
+     src="https://YOUR-USERNAME.github.io/YOUR-REPO/index.html?key=${e://Field/llm_api_key}&model=${e://Field/llm_model}&aid=${e://Field/llm_assistant_id}&turns=${e://Field/llm_max_turns}&condition=${e://Field/condition}&temp=${e://Field/llm_temperature}"
      style="width:100%; height:640px; border:none; border-radius:12px; display:block;"
      allow="clipboard-write">
    </iframe>
    ```
-3. Gear icon → **Add JavaScript** → paste `qualtrics_iframe_javascript.js` contents
+3. Gear icon → **Add JavaScript** → paste `qualtrics_iframe_javascript.js`
 
 ---
 
-## URL parameter design
+## Writing prompt files
 
-Only values that are **always non-blank** should go in the iframe URL. A blank parameter corrupts the URL string and strips all subsequent parameters, breaking the widget.
+Each `.prompt` file is plain text read directly into the model's system prompt. There is no required format — write whatever you would put in a system prompt. Some conventions that work well:
 
-| Parameter | Transport | Always present? | Notes |
-|---|---|---|---|
-| `key` | URL | Yes | API key |
-| `aid` | URL | Yes (blank for completion) | Widget checks `startsWith('prompt_')` so blank is safe |
-| `turns` | URL | Yes (blank = unlimited) | Handled safely when blank |
-| `condition` | URL | Yes | Condition label |
-| `model` | postMessage | No — blank in prompt mode conditions | Never put in URL |
-| `systemPrompt` | postMessage | No — blank in prompt mode conditions | Never put in URL; also avoids encoding issues with long text |
+**Put formatting instructions first.** Models weight earlier instructions more heavily. If you want plain prose output, say so at the top before the persona description.
+
+**Use identity framing, not rule lists.** "You are a person who believes X" produces more consistent behaviour than "Your goal is to do X". Give the persona a motivation and a point of view, not just a checklist.
+
+**Explicitly prohibit default behaviours.** GPT models default to markdown formatting, hedging language ("however", "on the other hand"), and ending with "good luck". Name these explicitly if you don't want them.
+
+**Example structure:**
+```
+RESPONSE FORMAT — MANDATORY: [formatting rules]
+
+PERSONA: [who the model is, what it believes, why it behaves that way]
+
+NEVER USE: [specific words or phrases to suppress]
+```
+
+---
+
+## Included example prompts
+
+| File | Behaviour |
+|---|---|
+| `control.prompt` | Balanced, even-handed consultant — acknowledges strengths and weaknesses equally |
+| `sycophantic.prompt` | Enthusiastic validating coach — affirms the user's position, never challenges |
+| `disagreeable.prompt` | Hard-nosed analyst — stress-tests every assumption, never validates |
+| `pirate.prompt` | Responds entirely in pirate dialect — good for testing the prompt system |
+| `aristotle.prompt` | Responds as Aristotle — reasoning from first principles, virtue ethics framing |
+| `limerick.prompt` | Responds only in limericks — useful for verifying the widget is applying system prompts |
+
+The three novelty prompts (pirate, Aristotle, limerick) are included for testing purposes. Because they produce responses that are unmistakably different from the default, they make it immediately obvious whether the system prompt is being applied correctly. Use `limerick` or `pirate` to verify your setup before running real conditions.
 
 ---
 
 ## Supported models (completion mode)
 
-| Provider | Model value |
+| Model | Notes |
 |---|---|
-| OpenAI | `gpt-4o`, `gpt-4o-mini`, `gpt-4-turbo` |
-| xAI | `grok-3`, `grok-3-mini` |
-| Anthropic | `claude-sonnet-4-20250514` |
-| Custom / RAG | Any OpenAI-compatible endpoint (see below) |
+| `gpt-4o` | Recommended — good instruction following, strong persona adherence |
+| `gpt-4.1` | Current OpenAI recommendation for instruction-following tasks |
+| `gpt-4-turbo` | Older but stable |
+| `grok-3` | xAI — requires xAI API key |
+| `grok-3-mini` | xAI — faster, lower cost |
+| `claude-sonnet-4-20250514` | Anthropic — requires Anthropic API key |
 
-To add a new model, add an entry to the `ENDPOINTS` object in `index.html`:
-```javascript
-'your-model-name': 'https://api.provider.com/v1/chat/completions'
-```
+Set `llm_model` in your Survey Flow to any of these. To add a new provider, add an entry to the `ENDPOINTS` object in `index.html`.
 
 ---
 
-## Experimental design
+## URL parameter reference
 
-### Varying model behaviour across conditions (prompt mode)
+All parameters travel in the iframe URL. Only short, always-present values go here — the system prompt travels via file fetch, not URL.
 
-Pre-create one OpenAI Prompt per condition with distinct System Instructions. The key levers are:
+| Parameter | Qualtrics field | Always present? | Notes |
+|---|---|---|---|
+| `key` | `llm_api_key` | Yes | API key |
+| `model` | `llm_model` | Yes | Model name |
+| `condition` | `condition` | Yes | Must match a `.prompt` filename |
+| `turns` | `llm_max_turns` | Yes (blank = unlimited) | Max exchanges |
+| `temp` | `llm_temperature` | Yes (blank = 0.3) | Temperature |
+| `aid` | `llm_assistant_id` | Optional | For Responses API mode (see below) |
 
-- **Persona framing** — define the model as a specific type of person with a motivation, not just a set of rules. Models follow identity-based instructions more reliably than behavioural constraints.
-- **Explicit phrase prohibition** — list specific words or phrases the model should never use. This prevents drift toward trained defaults (e.g. GPT defaults to "however", "that said", "good luck" regardless of instructions).
-- **Low temperature (0.3)** — critical for consistent within-condition behaviour across participants.
+---
 
-### Varying models across conditions (completion mode)
+## Responses API mode (advanced)
 
-Use the Randomiser to assign different `llm_model` values per branch. The iframe URL, JS tab, and widget code require no changes — only the Survey Flow field values change.
+The widget also supports OpenAI's Responses API using a Prompt object ID. This mode is for advanced users who want to manage model configuration entirely within the OpenAI platform rather than via `.prompt` files.
 
-### Mixing prompt mode and completion conditions
+Set `llm_assistant_id` to a valid Prompt ID (`pmpt_xxx`) in a Randomiser branch. The widget detects this and routes to the Responses API instead of chat completions. The `.prompt` file is ignored in this mode — system instructions come from the Prompt object definition.
 
-You can run prompt mode conditions and completion conditions in the same study. The widget routes automatically based on whether `aid` contains a valid prompt ID. For example:
-
-```
-Randomiser
-├── Branch A → llm_assistant_id = prompt_xxx  (prompt mode — fixed behavioural profile)
-├── Branch B → llm_model = gpt-4-turbo        (completion mode — unmodified model)
-└── Branch C → llm_model = grok-3             (completion mode — different provider)
-```
+Note: OpenAI Prompt objects are scheduled for deprecation on November 30, 2026. For new studies, the `.prompt` file approach is recommended.
 
 ---
 
@@ -227,9 +235,7 @@ Randomiser
 ]
 ```
 
-Additional fields recorded: `chat_model`, `chat_assistant_id`, `chat_thread_id`, `chat_total_turns`, `chat_system_prompt`, `chat_timestamp`, `chat_condition`, `chat_mode`.
-
-The `chat_thread_id` field records the OpenAI thread ID, which allows you to retrieve the full conversation directly from the OpenAI platform independently of Qualtrics.
+Additional fields recorded: `chat_model`, `chat_condition`, `chat_mode`, `chat_temperature`, `chat_total_turns`, `chat_timestamp`, `chat_system_prompt`, `chat_assistant_id`, `chat_thread_id`.
 
 ### Parsing in R
 
@@ -256,26 +262,13 @@ turns = df["chat"].explode().apply(pd.Series)
 
 ## Using a custom or RAG model backend
 
-Deploy a server that exposes an OpenAI-compatible endpoint:
+Deploy a server that exposes an OpenAI-compatible `/v1/chat/completions` endpoint. Add it to the `ENDPOINTS` object in `index.html`:
 
-```
-POST https://your-backend.com/v1/chat/completions
-Authorization: Bearer <your-internal-token>
-Content-Type: application/json
-
-{
-  "model": "your-model-name",
-  "messages": [{"role": "user", "content": "..."}],
-  "max_tokens": 1024
-}
+```javascript
+'my-rag-model': 'https://your-backend.com/v1/chat/completions'
 ```
 
-In your Survey Flow set:
-- `llm_assistant_id` → blank
-- `llm_model` → your model name
-- Add `&endpoint=https://your-backend.com/v1/chat/completions` to the iframe URL
-
-A minimal FastAPI wrapper:
+Set `llm_model = my-rag-model` in your Survey Flow. A minimal FastAPI wrapper:
 
 ```python
 from fastapi import FastAPI, Request
@@ -288,12 +281,12 @@ app = FastAPI()
 async def chat(request: Request):
     body = await request.json()
     messages = body["messages"]
-    user_text = messages[-1]["content"]
-    history   = messages[:-1]
-    answer = your_pipeline.generate(user_text, history=history)
+    answer = your_pipeline.generate(
+        messages[-1]["content"], history=messages[:-1]
+    )
     return JSONResponse({
         "choices": [{"message": {"role": "assistant", "content": answer}}],
-        "usage":   {"total_tokens": len(answer) // 4}
+        "usage": {"total_tokens": len(answer) // 4}
     })
 ```
 
@@ -303,21 +296,21 @@ async def chat(request: Request):
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| Mode shows `completion` instead of `prompt` | `aid` URL param not arriving or not starting with `prompt_` | Run `new URLSearchParams(window.location.search).get('aid')` in browser console on the preview page |
-| API 400: must provide model parameter | Falling into completion path with no model set | Prompt ID not routing correctly — see above |
-| API 404: no prompt found | API key belongs to different account or project than the prompt | Ensure key and prompt are under the same OpenAI project |
-| Using old `asst_xxx` IDs | Assistants API sunset August 26, 2026 | Migrate to Prompts in the OpenAI dashboard and update `llm_assistant_id` field values to `prompt_xxx` |
-| `llm_assistant_id` empty in JS tab | Field not declared in shared Embedded Data block | Add `llm_assistant_id` as a blank field in the shared block below the Randomiser |
-| All conditions respond identically | System prompt overridden by model's training defaults | Switch to Assistant mode with Temperature 0.3 |
-| URL parameters not arriving in iframe | Blank parameters corrupting URL string | Never put potentially-blank fields in the URL — use postMessage |
-| Pipe value contains literal `${e://Field/...}` | Embedded Data block is below the question block in Survey Flow | Move all Embedded Data blocks above the question block |
-| postMessage config not reaching iframe | Timing issue — iframe loaded before Qualtrics JS tab registered | Widget retries `llm_chat_ready` every 500ms; JS tab sends config immediately on load as fallback |
+| Blue "Loading…" never goes away | Prompt file not found or wrong condition name | Check `prompts/{condition}.prompt` exists; condition name is case-sensitive |
+| Red error: "Prompt file not found" | Filename doesn't match condition value | Condition `sycophantic` requires `prompts/sycophantic.prompt` exactly |
+| Generic response ignoring persona | Prompt file empty or not loading | Visit `https://your-github-pages-url/prompts/{condition}.prompt` directly to confirm it loads |
+| API 400: must provide model | `llm_model` empty or not arriving | Check `new URLSearchParams(...).get('model')` in browser console |
+| API 401: invalid key | Wrong API key or wrong project | Confirm key in Survey Flow matches the project your model is under |
+| API 404: model not found | Invalid model name | Check spelling; see supported models table above |
+| Turns counter not incrementing | Finish & save not writing data | Check `chat_conversation_json` is declared in Survey Flow output fields |
+| `llm_assistant_id` empty in JS | Field not declared in shared Embedded Data block | Add `llm_assistant_id` as blank field in shared block above Randomiser |
+| All conditions respond identically | System prompt not loading | Test condition prompt URL directly in browser |
 
 ---
 
 ## Security notes
 
-- API keys are passed as URL parameters and visible in the iframe `src` attribute in page source. Acceptable for research use with a rate-limited, project-scoped API key.
-- For production deployments with sensitive keys, use a backend proxy so keys never reach the browser.
-- Create project-scoped API keys in OpenAI (Settings → API Keys) to limit the blast radius if a key is exposed.
-- OpenAI standard API accounts may use conversation data for training. Use an enterprise agreement or opt out via OpenAI privacy settings if this is a concern for your IRB or data governance requirements.
+- API keys travel as URL parameters and are visible in the iframe `src` attribute. Acceptable for research use with a rate-limited, project-scoped key.
+- For production deployments, use a backend proxy so keys never reach the browser.
+- Create project-scoped API keys in OpenAI (Settings → API Keys) to limit exposure.
+- OpenAI standard accounts may use conversation data for model training. Use an enterprise agreement or opt out via OpenAI privacy settings if this is a concern for your IRB.
