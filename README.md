@@ -12,9 +12,9 @@ Built for researchers who want to study human–AI interaction within a controll
 Qualtrics Survey Flow
 │
 ├── Randomiser
-│   ├── Branch A  →  condition = control
-│   ├── Branch B  →  condition = sycophantic
-│   └── Branch C  →  condition = disagreeable
+│   ├── Branch A  →  condition = aristotle
+│   ├── Branch B  →  condition = pirate
+│   └── Branch C  →  condition = limerick
 │
 ├── Shared Embedded Data
 │   └── llm_api_key, llm_model, llm_max_turns, llm_temperature
@@ -39,9 +39,6 @@ A chat interface is hosted on GitHub Pages and embedded via `<iframe>`. On load,
 your-repo/
 ├── index.html                  ← the chat widget (host on GitHub Pages)
 ├── prompts/
-│   ├── control.prompt          ← balanced consultant persona
-│   ├── sycophantic.prompt      ← validating coach persona
-│   ├── disagreeable.prompt     ← critical analyst persona
 │   ├── pirate.prompt           ← example: pirate dialect
 │   ├── aristotle.prompt        ← example: Aristotelian philosopher
 │   └── limerick.prompt         ← example: responds only in limericks
@@ -173,9 +170,6 @@ NEVER USE: [specific words or phrases to suppress]
 
 | File | Behaviour |
 |---|---|
-| `control.prompt` | Balanced, even-handed consultant — acknowledges strengths and weaknesses equally |
-| `sycophantic.prompt` | Enthusiastic validating coach — affirms the user's position, never challenges |
-| `disagreeable.prompt` | Hard-nosed analyst — stress-tests every assumption, never validates |
 | `pirate.prompt` | Responds entirely in pirate dialect — good for testing the prompt system |
 | `aristotle.prompt` | Responds as Aristotle — reasoning from first principles, virtue ethics framing |
 | `limerick.prompt` | Responds only in limericks — useful for verifying the widget is applying system prompts |
