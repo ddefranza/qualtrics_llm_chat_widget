@@ -87,12 +87,12 @@ var ENDPOINTS = {
 
 var C = {
   apiKey:       p.get('key')          || '',
-  model:        p.get('model')        || '',  // from URL — always set in Survey Flow
-  assistantId:  p.get('aid')          || '',  // short param name avoids blank corruption
-  systemPrompt: '',                           // arrives via postMessage (long text)
+  model:        p.get('model')        || '',
+  assistantId:  p.get('aid')          || '',
+  systemPrompt: p.get('sys')          || '',  // URL-encoded by Qualtrics, decoded by URLSearchParams
   maxTurns:     parseInt(p.get('turns')) || 0,
   condition:    p.get('condition')    || '',
-  temperature:  parseFloat(p.get('temp')) || 0.3  // default 0.3; set llm_temperature in Survey Flow
+  temperature:  parseFloat(p.get('temp')) || 0.3
 };
 
 // ── Routing: check URL first, postMessage can update later ─
