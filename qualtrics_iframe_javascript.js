@@ -8,12 +8,14 @@ Qualtrics.SurveyEngine.addOnReady(function() {
   var assistantId  = "${e://Field/llm_assistant_id|js}";
   var systemPrompt = "${e://Field/llm_system_prompt|js}";
   var condition    = "${e://Field/condition|js}";
+  var temperature  = "${e://Field/llm_temperature|js}";
 
   var config = {
     model:        model,
     assistantId:  assistantId,
     systemPrompt: systemPrompt,
-    condition:    condition
+    condition:    condition,
+    temperature:  temperature
   };
 
   function sendConfig() {
@@ -44,6 +46,7 @@ Qualtrics.SurveyEngine.addOnReady(function() {
       Qualtrics.SurveyEngine.setEmbeddedData('chat_timestamp',         p.metadata.timestamp);
       Qualtrics.SurveyEngine.setEmbeddedData('chat_condition',         p.metadata.condition);
       Qualtrics.SurveyEngine.setEmbeddedData('chat_mode',              p.metadata.mode);
+      Qualtrics.SurveyEngine.setEmbeddedData('chat_temperature',        String(p.metadata.temperature));
     }
 
     // Advance survey on finish
