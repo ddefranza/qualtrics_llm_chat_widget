@@ -145,22 +145,48 @@ if (!C.apiKey) {
   ebEl.style.borderColor = '#C7D7FF';
   ebEl.style.color = '#1A5CFF';
 
-  fetch('prompts/' + C.condition + '.prompt')
-    .then(function(r) {
-      if (!r.ok) throw new Error(
-        'Prompt file not found: prompts/' + C.condition + '.prompt (HTTP ' + r.status + '). ' +
-        'Check the file exists in your prompts/ folder and the condition name matches exactly.'
-      );
-      return r.text();
-    })
-    .then(function(text) {
-      C.systemPrompt = text.trim();
-      ebEl.style.display = 'none';
-      enableChat();
-    })
-    .catch(function(err) {
-      showErr(err.message);
-    });
+  // Build absolute prompt URL from the script's own location.
+  // Using a link element is more reliable than string manipulation
+  // of window.location when the page is embedded in an iframe.
+  var promptBase = window.location.href.substring(0, window.location.href.lastIndexOf('/'));
+  var promptUrl  = promptBase + '/prompts/' + C.condition + '.prompt';
+  console.log('[LLM Widget] Fetching prompt:', promptUrl);
+
+  // Fetch with retry — tries up to 3 times before showing an error.
+  // Chat remains disabled until the prompt is confirmed loaded,
+  // preventing any API call going out with an empty system prompt.
+  function fetchPromptWithRetry(url, attemptsLeft) {
+    fetch(url, { cache: 'no-store' })
+      .then(function(r) {
+        if (!r.ok) throw new Error(
+          'Prompt file not found: prompts/' + C.condition + '.prompt (HTTP ' + r.status + '). ' +
+          'Check the file exists in your prompts/ folder and the condition name matches exactly.'
+        );
+        return r.text();
+      })
+      .then(function(text) {
+        text = text.trim();
+        if (!text) throw new Error(
+          'Prompt file is empty: prompts/' + C.condition + '.prompt. ' +
+          'Add your system prompt text to this file.'
+        );
+        console.log('[LLM Widget] Prompt loaded, length:', text.length);
+        C.systemPrompt = text;
+        console.log('[LLM Widget] C.systemPrompt set, enabling chat');
+        ebEl.style.display = 'none';
+        enableChat();
+      })
+      .catch(function(err) {
+        console.log('[LLM Widget] Fetch error:', err.message, 'Attempts left:', attemptsLeft - 1);
+        if (attemptsLeft > 1) {
+          setTimeout(function() { fetchPromptWithRetry(url, attemptsLeft - 1); }, 1000);
+        } else {
+          showErr(err.message);
+        }
+      });
+  }
+
+  fetchPromptWithRetry(promptUrl, 3);
 }
 
 // ── Receive config via postMessage ───────────────────────
@@ -173,7 +199,8 @@ window.addEventListener('message', function(e) {
   if (typeof readyInterval !== 'undefined') clearInterval(readyInterval);
   var cfg = e.data.config;
   if (cfg.model)                      C.model        = cfg.model;
-  if (cfg.systemPrompt !== undefined) C.systemPrompt = cfg.systemPrompt;
+  // Only accept systemPrompt from postMessage if fetch hasn't loaded one yet
+  if (cfg.systemPrompt !== undefined && cfg.systemPrompt && !C.systemPrompt) C.systemPrompt = cfg.systemPrompt;
   if (cfg.condition)                  C.condition    = cfg.condition;
   if (cfg.temperature !== undefined)  C.temperature  = parseFloat(cfg.temperature) || 0.3;
   // Accept pmpt_xxx and prompt_xxx (Responses API) and asst_xxx (legacy, sunset Aug 2026)
@@ -289,6 +316,7 @@ async function callLLM(txt) {
 async function send() {
   var txt = uiEl.value.trim();
   if (!txt || busy) return;
+
   if (C.maxTurns > 0 && turns >= C.maxTurns) {
     showErr('Maximum ' + C.maxTurns + ' exchanges reached. Please click "Finish & save".');
     disableChat(); return;
