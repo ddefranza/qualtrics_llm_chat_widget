@@ -108,6 +108,7 @@ Each branch sets the fields that vary by condition:
 |---|---|
 | `condition` | Your condition label (e.g. `A`, `treatment`, `control`) |
 | `llm_assistant_id` | `prompt_xxxxxxxxxxxx` for that condition |
+| `llm_model` | Model to use (e.g. `gpt-4-turbo`) — must match the model set in your Prompt definition |
 
 **Completion mode condition:**
 
