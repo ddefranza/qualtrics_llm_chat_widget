@@ -35,17 +35,19 @@ Qualtrics Survey
 
 The widget supports two modes selected automatically based on which fields are populated:
 
-### Assistant mode
-Uses the OpenAI Assistants API. The system prompt and model settings are baked into a pre-created Assistant object on OpenAI's platform — the widget passes only the assistant ID. This produces more consistent and reliable behavioural differentiation across conditions than passing system prompts at runtime, because the model's behaviour is set at the assistant level rather than overridable by RLHF training defaults.
+### Prompt mode (recommended for behavioural conditions)
+Uses the OpenAI **Responses API** with a pre-created **Prompt** object. The system prompt and model settings are baked into the Prompt in the OpenAI dashboard — the widget passes only the prompt ID. A Conversation object is created on the first turn and reused for subsequent turns, maintaining context server-side.
+
+This replaces the deprecated Assistants API (sunset August 26, 2026). The mapping is: Assistants → Prompts, Threads → Conversations, Runs → Responses. The new API is simpler — a single `POST /v1/responses` call per turn replaces the old 5-step create-thread/add-message/create-run/poll/retrieve flow.
 
 **Use this when:** you need consistent, distinct behavioural profiles across experimental conditions.
 
-### Completion mode
-Uses the standard chat completions API (OpenAI, xAI/Grok, Anthropic, or any OpenAI-compatible endpoint including custom/RAG backends). The model and system prompt are passed via postMessage from the Qualtrics JS tab.
+### Completion mode (for baseline or multi-model conditions)
+Uses the standard chat completions API (OpenAI, xAI/Grok, Anthropic, or any OpenAI-compatible endpoint including custom/RAG backends). The model and system prompt are passed via postMessage from the Qualtrics JS tab. Conversation history is maintained client-side.
 
 **Use this when:** you are testing different models, using a custom or fine-tuned backend, or running a standard unmodified model condition.
 
-**Routing logic:** if the `aid` URL parameter starts with `asst_` → Assistant mode. Otherwise → completion mode. The two modes can be mixed across conditions in the same study.
+**Routing logic:** if the `aid` URL parameter starts with `prompt_` → Prompt/Responses API mode. If it starts with `asst_` → legacy Assistants API (deprecated, avoid for new studies). Otherwise → completion mode. The two modes can be mixed across conditions in the same study.
 
 ---
 
@@ -61,18 +63,24 @@ Uses the standard chat completions API (OpenAI, xAI/Grok, Anthropic, or any Open
 
 ## Setup
 
-### 1. (Assistant mode only) Create OpenAI Assistants
+### 1. (Prompt mode only) Create OpenAI Prompts
+
+The Assistants API was sunset on August 26, 2026. The replacement is the **Responses API**, which uses **Prompt** objects (created in the OpenAI dashboard) in place of Assistants, and **Conversation** objects in place of Threads.
 
 For each condition that requires a distinct behavioural profile:
 
-1. Go to [platform.openai.com](https://platform.openai.com) → Assistants
-2. Create one Assistant per condition
+1. Go to [platform.openai.com](https://platform.openai.com) → Prompts (under the Explore menu)
+2. Create one Prompt per condition
 3. For each, set:
    - **System instructions**: your condition-specific persona or instruction prompt
-   - **Model**: `gpt-4-turbo` (recommended — follows instructions more reliably than gpt-4o)
+   - **Model**: `gpt-4-turbo` or later (recommended — follows instructions more reliably at lower temperatures)
    - **Temperature**: `0.3` (lower temperature produces more consistent within-condition behaviour)
    - **Top P**: `0.9`
-4. Copy each Assistant ID (`asst_xxxxxxxxxxxx`)
+4. Copy each Prompt ID (`prompt_xxxxxxxxxxxx`)
+
+> **Migrating from Assistants?** In the OpenAI dashboard, open each existing Assistant and click **"Create prompt"** to migrate its instructions automatically. Then replace the `asst_xxx` values in your Survey Flow with the new `prompt_xxx` IDs.
+
+> **Note on Prompt object longevity:** Reusable prompt objects are also on a deprecation timeline (scheduled shutdown November 30, 2026). OpenAI's long-term recommendation is to move system instructions into application code. For this widget that means using the completion mode path with `llm_system_prompt` passed via postMessage — which is already fully implemented. See the experimental design section for guidance on choosing between prompt mode and completion mode.
 
 ### 2. Host the chat widget on GitHub Pages
 
@@ -94,12 +102,12 @@ For each condition that requires a distinct behavioural profile:
 
 Each branch sets the fields that vary by condition:
 
-**Assistant mode condition:**
+**Prompt mode condition (Responses API):**
 
 | Field | Value |
 |---|---|
 | `condition` | Your condition label (e.g. `A`, `treatment`, `control`) |
-| `llm_assistant_id` | `asst_xxxxxxxxxxxx` for that condition |
+| `llm_assistant_id` | `prompt_xxxxxxxxxxxx` for that condition |
 
 **Completion mode condition:**
 
@@ -156,11 +164,11 @@ Only values that are **always non-blank** should go in the iframe URL. A blank p
 | Parameter | Transport | Always present? | Notes |
 |---|---|---|---|
 | `key` | URL | Yes | API key |
-| `aid` | URL | Yes (blank for completion) | Widget checks `startsWith('asst_')` so blank is safe |
+| `aid` | URL | Yes (blank for completion) | Widget checks `startsWith('prompt_')` so blank is safe |
 | `turns` | URL | Yes (blank = unlimited) | Handled safely when blank |
 | `condition` | URL | Yes | Condition label |
-| `model` | postMessage | No — blank in assistant conditions | Never put in URL |
-| `systemPrompt` | postMessage | No — blank in assistant conditions | Never put in URL; also avoids encoding issues with long text |
+| `model` | postMessage | No — blank in prompt mode conditions | Never put in URL |
+| `systemPrompt` | postMessage | No — blank in prompt mode conditions | Never put in URL; also avoids encoding issues with long text |
 
 ---
 
@@ -182,11 +190,11 @@ To add a new model, add an entry to the `ENDPOINTS` object in `index.html`:
 
 ## Experimental design
 
-### Varying model behaviour across conditions (Assistant mode)
+### Varying model behaviour across conditions (prompt mode)
 
-Pre-create one OpenAI Assistant per condition with distinct System Instructions. The key levers are:
+Pre-create one OpenAI Prompt per condition with distinct System Instructions. The key levers are:
 
-- **Persona framing** — define the assistant as a specific type of person with a motivation, not just a set of rules. Models follow identity-based instructions more reliably than behavioural constraints.
+- **Persona framing** — define the model as a specific type of person with a motivation, not just a set of rules. Models follow identity-based instructions more reliably than behavioural constraints.
 - **Explicit phrase prohibition** — list specific words or phrases the model should never use. This prevents drift toward trained defaults (e.g. GPT defaults to "however", "that said", "good luck" regardless of instructions).
 - **Low temperature (0.3)** — critical for consistent within-condition behaviour across participants.
 
@@ -194,15 +202,15 @@ Pre-create one OpenAI Assistant per condition with distinct System Instructions.
 
 Use the Randomiser to assign different `llm_model` values per branch. The iframe URL, JS tab, and widget code require no changes — only the Survey Flow field values change.
 
-### Mixing assistant and completion conditions
+### Mixing prompt mode and completion conditions
 
-You can run assistant conditions and completion conditions in the same study. The widget routes automatically based on whether `aid` contains a valid assistant ID. For example:
+You can run prompt mode conditions and completion conditions in the same study. The widget routes automatically based on whether `aid` contains a valid prompt ID. For example:
 
 ```
 Randomiser
-├── Branch A → llm_assistant_id = asst_xxx  (assistant mode)
-├── Branch B → llm_model = gpt-4-turbo      (completion mode, unmodified)
-└── Branch C → llm_model = grok-3           (completion mode, different provider)
+├── Branch A → llm_assistant_id = prompt_xxx  (prompt mode — fixed behavioural profile)
+├── Branch B → llm_model = gpt-4-turbo        (completion mode — unmodified model)
+└── Branch C → llm_model = grok-3             (completion mode — different provider)
 ```
 
 ---
@@ -294,9 +302,10 @@ async def chat(request: Request):
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| Mode shows `completion` instead of `assistant` | `aid` URL param not arriving or not starting with `asst_` | Run `new URLSearchParams(window.location.search).get('aid')` in browser console on the preview page |
-| API 400: must provide model parameter | Falling into completion path with no model set | Assistant ID not routing correctly — see above |
-| API 404: no assistant found | API key belongs to different account or project than the assistant | Ensure key and assistant are under the same OpenAI project |
+| Mode shows `completion` instead of `prompt` | `aid` URL param not arriving or not starting with `prompt_` | Run `new URLSearchParams(window.location.search).get('aid')` in browser console on the preview page |
+| API 400: must provide model parameter | Falling into completion path with no model set | Prompt ID not routing correctly — see above |
+| API 404: no prompt found | API key belongs to different account or project than the prompt | Ensure key and prompt are under the same OpenAI project |
+| Using old `asst_xxx` IDs | Assistants API sunset August 26, 2026 | Migrate to Prompts in the OpenAI dashboard and update `llm_assistant_id` field values to `prompt_xxx` |
 | `llm_assistant_id` empty in JS tab | Field not declared in shared Embedded Data block | Add `llm_assistant_id` as a blank field in the shared block below the Randomiser |
 | All conditions respond identically | System prompt overridden by model's training defaults | Switch to Assistant mode with Temperature 0.3 |
 | URL parameters not arriving in iframe | Blank parameters corrupting URL string | Never put potentially-blank fields in the URL — use postMessage |
