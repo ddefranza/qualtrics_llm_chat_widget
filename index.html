@@ -97,7 +97,7 @@ var C = {
 // ── Routing: check URL first, postMessage can update later ─
 // assistantId comes from URL param 'aid' (short name, less likely
 // to be corrupted). postMessage can also set/override it.
-var useAssistant = C.assistantId.startsWith('asst_');
+var useAssistant = C.assistantId.startsWith('prompt_') || C.assistantId.startsWith('asst_');
 var threadId     = null;  // persists across turns for Assistants API
 
 C.endpoint = 'https://api.openai.com/v1/chat/completions'; // updated via postMessage once model is known
@@ -146,7 +146,8 @@ window.addEventListener('message', function(e) {
   if (cfg.model)                      C.model        = cfg.model;
   if (cfg.systemPrompt !== undefined) C.systemPrompt = cfg.systemPrompt;
   if (cfg.condition)                  C.condition    = cfg.condition;
-  if (cfg.assistantId && cfg.assistantId.startsWith('asst_')) {
+  // Accept both prompt_xxx (Responses API) and asst_xxx (legacy, sunset Aug 2026)
+  if (cfg.assistantId && (cfg.assistantId.startsWith('prompt_') || cfg.assistantId.startsWith('asst_'))) {
     C.assistantId = cfg.assistantId;
     useAssistant  = true;
   }
@@ -184,71 +185,46 @@ function showTyping() {
 }
 function removeTyping() { var e = document.getElementById('ti'); if (e) e.remove(); }
 
-// ── PATH A: Assistants API (thread-based) ─────────────────
+// ── PATH A: Responses API (replaces Assistants API) ────────
+// The Assistants API was sunset August 26, 2026.
+// Replacement: POST /v1/responses with a prompt_id (replaces
+// assistant_id) and conversation_id (replaces thread_id).
+//
 // Flow per turn:
-//   1. Create thread on first turn (reuse threadId on subsequent turns)
-//   2. Add user message to thread
-//   3. Create a run
-//   4. Poll run status until completed
-//   5. Retrieve latest assistant message
+//   1. Create conversation on first turn (reuse conversationId after)
+//   2. POST /v1/responses with prompt, input, and conversation_id
+//   3. Read output_text from response — no polling required
 async function callAssistant(txt) {
   var headers = {
-    'Content-Type':    'application/json',
-    'Authorization':   'Bearer ' + C.apiKey,
-    'OpenAI-Beta':     'assistants=v2'
+    'Content-Type':  'application/json',
+    'Authorization': 'Bearer ' + C.apiKey
   };
 
-  // Step 1: create thread on first turn only
+  // Step 1: create conversation on first turn only
   if (!threadId) {
-    var tRes = await fetch('https://api.openai.com/v1/threads', {
+    var cRes = await fetch('https://api.openai.com/v1/conversations', {
       method: 'POST', headers: headers, body: JSON.stringify({})
     });
-    if (!tRes.ok) { var e = await tRes.text(); throw new Error('Thread create ' + tRes.status + ': ' + e.slice(0,200)); }
-    var tData = await tRes.json();
-    threadId = tData.id;
+    if (!cRes.ok) { var e = await cRes.text(); throw new Error('Conversation create ' + cRes.status + ': ' + e.slice(0,200)); }
+    var cData = await cRes.json();
+    threadId = cData.id;  // stored as threadId for backwards compat with payload builder
   }
 
-  // Step 2: add user message to thread
-  var mRes = await fetch('https://api.openai.com/v1/threads/' + threadId + '/messages', {
+  // Step 2: create a response (single call — no polling needed)
+  var rRes = await fetch('https://api.openai.com/v1/responses', {
     method: 'POST', headers: headers,
-    body: JSON.stringify({ role: 'user', content: txt })
+    body: JSON.stringify({
+      prompt:       { id: C.assistantId },  // assistantId now holds prompt_id (prompt_xxx)
+      input:        [{ role: 'user', content: txt }],
+      conversation: threadId
+    })
   });
-  if (!mRes.ok) { var e = await mRes.text(); throw new Error('Message add ' + mRes.status + ': ' + e.slice(0,200)); }
+  if (!rRes.ok) { var e = await rRes.text(); throw new Error('Response create ' + rRes.status + ': ' + e.slice(0,200)); }
+  var rData = await rRes.json();
 
-  // Step 3: create a run
-  var rRes = await fetch('https://api.openai.com/v1/threads/' + threadId + '/runs', {
-    method: 'POST', headers: headers,
-    body: JSON.stringify({ assistant_id: C.assistantId })
-  });
-  if (!rRes.ok) { var e = await rRes.text(); throw new Error('Run create ' + rRes.status + ': ' + e.slice(0,200)); }
-  var run = await rRes.json();
-  var runId = run.id;
-
-  // Step 4: poll until completed (max 60s)
-  var attempts = 0;
-  while (attempts < 60) {
-    await new Promise(function(r) { setTimeout(r, 1000); });
-    var sRes = await fetch('https://api.openai.com/v1/threads/' + threadId + '/runs/' + runId, {
-      headers: headers
-    });
-    if (!sRes.ok) { var e = await sRes.text(); throw new Error('Run poll ' + sRes.status + ': ' + e.slice(0,200)); }
-    var status = await sRes.json();
-    if (status.status === 'completed') break;
-    if (status.status === 'failed' || status.status === 'cancelled' || status.status === 'expired') {
-      throw new Error('Run ' + status.status + ': ' + (status.last_error && status.last_error.message || 'unknown error'));
-    }
-    attempts++;
-  }
-  if (attempts >= 60) throw new Error('Run timed out after 60 seconds.');
-
-  // Step 5: retrieve latest assistant message
-  var listRes = await fetch('https://api.openai.com/v1/threads/' + threadId + '/messages?limit=1&order=desc', {
-    headers: headers
-  });
-  if (!listRes.ok) { var e = await listRes.text(); throw new Error('Message list ' + listRes.status + ': ' + e.slice(0,200)); }
-  var listData = await listRes.json();
-  var reply = listData.data && listData.data[0] && listData.data[0].content && listData.data[0].content[0] && listData.data[0].content[0].text && listData.data[0].content[0].text.value || '';
-  var tok = (status && status.usage && status.usage.total_tokens) || Math.round((txt.length + reply.length) / 4);
+  // Step 3: extract text and token usage
+  var reply = rData.output_text || '';
+  var tok = (rData.usage && rData.usage.total_tokens) || Math.round((txt.length + reply.length) / 4);
   return { text: reply, tok: tok };
 }
 
