@@ -91,13 +91,14 @@ var C = {
   assistantId:  p.get('aid')          || '', // short param name avoids blank corruption
   systemPrompt: '',                        // arrives via postMessage
   maxTurns:     parseInt(p.get('turns')) || 0,
-  condition:    p.get('condition')    || ''
+  condition:    p.get('condition')    || '',
+  temperature:  parseFloat(p.get('temp')) || 0.3  // default 0.3; set llm_temperature in Survey Flow
 };
 
 // ── Routing: check URL first, postMessage can update later ─
 // assistantId comes from URL param 'aid' (short name, less likely
 // to be corrupted). postMessage can also set/override it.
-var useAssistant = C.assistantId.startsWith('prompt_') || C.assistantId.startsWith('asst_');
+var useAssistant = C.assistantId.startsWith('prompt_') || C.assistantId.startsWith('pmpt_') || C.assistantId.startsWith('asst_');
 var threadId     = null;  // persists across turns for Assistants API
 
 C.endpoint = 'https://api.openai.com/v1/chat/completions'; // updated via postMessage once model is known
@@ -146,8 +147,9 @@ window.addEventListener('message', function(e) {
   if (cfg.model)                      C.model        = cfg.model;
   if (cfg.systemPrompt !== undefined) C.systemPrompt = cfg.systemPrompt;
   if (cfg.condition)                  C.condition    = cfg.condition;
-  // Accept both prompt_xxx (Responses API) and asst_xxx (legacy, sunset Aug 2026)
-  if (cfg.assistantId && (cfg.assistantId.startsWith('prompt_') || cfg.assistantId.startsWith('asst_'))) {
+  if (cfg.temperature !== undefined)  C.temperature  = parseFloat(cfg.temperature) || 0.3;
+  // Accept pmpt_xxx and prompt_xxx (Responses API) and asst_xxx (legacy, sunset Aug 2026)
+  if (cfg.assistantId && (cfg.assistantId.startsWith('pmpt_') || cfg.assistantId.startsWith('prompt_') || cfg.assistantId.startsWith('asst_'))) {
     C.assistantId = cfg.assistantId;
     useAssistant  = true;
   }
@@ -236,11 +238,11 @@ async function callCompletion(txt) {
   var headers, body;
   if (isAnth) {
     headers = { 'Content-Type': 'application/json', 'x-api-key': C.apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' };
-    body = JSON.stringify({ model: C.model, max_tokens: 1024, messages: msgs, ...(C.systemPrompt && { system: C.systemPrompt }) });
+    body = JSON.stringify({ model: C.model, max_tokens: 1024, messages: msgs, temperature: C.temperature, ...(C.systemPrompt && { system: C.systemPrompt }) });
   } else {
     headers = { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + C.apiKey };
     var fm = C.systemPrompt ? [{ role: 'system', content: C.systemPrompt }].concat(msgs) : msgs;
-    body = JSON.stringify({ model: C.model, messages: fm, max_tokens: 1024 });
+    body = JSON.stringify({ model: C.model, messages: fm, max_tokens: 1024, temperature: C.temperature });
   }
   var r = await fetch(C.endpoint, { method: 'POST', headers: headers, body: body });
   if (!r.ok) { var err = await r.text(); throw new Error('API ' + r.status + ': ' + err.slice(0, 200)); }
@@ -299,6 +301,7 @@ function buildPayload() {
       threadId:        threadId        || '',
       systemPrompt:    C.systemPrompt  || '',
       condition:       C.condition,
+      temperature:     C.temperature,
       totalTurns:      turns,
       estimatedTokens: tokens,
       timestamp:       new Date().toISOString()
