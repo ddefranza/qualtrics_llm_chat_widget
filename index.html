@@ -297,7 +297,12 @@ async function callCompletion(txt) {
   } else {
     headers = { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + C.apiKey };
     var fm = C.systemPrompt ? [{ role: 'system', content: C.systemPrompt }].concat(msgs) : msgs;
-    body = JSON.stringify({ model: C.model, messages: fm, max_tokens: 1024, temperature: C.temperature });
+    // Newer models (gpt-5.x and reasoning models) don't support custom temperature.
+    // Only include it for models that are known to support it.
+    var supportsTemp = C.model.startsWith('gpt-4') || C.model.startsWith('grok') || C.model.startsWith('claude');
+    var bodyObj = { model: C.model, messages: fm, max_completion_tokens: 1024 };
+    if (supportsTemp) bodyObj.temperature = C.temperature;
+    body = JSON.stringify(bodyObj);
   }
   var r = await fetch(C.endpoint, { method: 'POST', headers: headers, body: body });
   if (!r.ok) { var err = await r.text(); throw new Error('API ' + r.status + ': ' + err.slice(0, 200)); }
@@ -366,16 +371,26 @@ function buildPayload() {
 }
 
 function postUpdate() {
-  if (window.parent !== window) window.parent.postMessage({ type: 'llm_chat_update', data: buildPayload() }, '*');
+  if (window.parent !== window) {
+    var payload = buildPayload();
+    console.log('[LLM Widget] postUpdate: turns=' + turns + ' conv_length=' + payload.conversation.length);
+    window.parent.postMessage({ type: 'llm_chat_update', data: payload }, '*');
+  }
 }
 
 // ── Finish ────────────────────────────────────────────────
 fbEl.addEventListener('click', function() {
   var payload = buildPayload();
+  console.log('[LLM Widget] Finish clicked. Turns:', turns, 'Conversation length:', payload.conversation.length);
   fbEl.textContent = '✓ Saved';
   fbEl.style.background = '#ECFDF5'; fbEl.style.borderColor = '#6EE7B7'; fbEl.style.color = '#065F46';
   fbEl.disabled = true; disableChat();
-  if (window.parent !== window) window.parent.postMessage({ type: 'llm_chat_finished', data: payload }, '*');
+  if (window.parent !== window) {
+    // Send both update and finished messages to ensure Qualtrics listener catches one
+    window.parent.postMessage({ type: 'llm_chat_update',   data: payload }, '*');
+    window.parent.postMessage({ type: 'llm_chat_finished', data: payload }, '*');
+    console.log('[LLM Widget] postMessage sent to parent');
+  }
 });
 
 // ── Input UX ──────────────────────────────────────────────
