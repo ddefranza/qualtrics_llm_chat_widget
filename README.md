@@ -22,9 +22,9 @@ Qualtrics Survey Flow
 └── Chat question block
         │
         ▼
-    iframe → GitHub Pages/index.html?condition=sycophantic&...
+    iframe → GitHub Pages/index.html?condition=pirate&...
                     │
-                    ├── fetches prompts/sycophantic.prompt
+                    ├── fetches prompts/pirate.prompt
                     ├── runs chat with that system prompt
                     └── postMessage → Qualtrics JS tab → embedded data fields
 ```
@@ -75,12 +75,14 @@ No code changes needed.
    ```
    https://YOUR-USERNAME.github.io/YOUR-REPO/index.html
    ```
-5. Test a condition by visiting directly:
+5. Test a condition by visiting directly in a browser — no Qualtrics needed:
    ```
-   https://YOUR-USERNAME.github.io/YOUR-REPO/index.html?key=sk-xxx&model=gpt-4o&condition=pirate&turns=6&temp=0.7
+   https://YOUR-USERNAME.github.io/YOUR-REPO/index.html?key=sk-xxx&model=gpt-4o&condition=pirate&turns=6
    ```
 
 ### 2. Configure Qualtrics Survey Flow
+
+> **Important:** This widget requires Qualtrics **New Experience** (Simple layout). The output fields use the `__js_` prefix convention required by `setJSEmbeddedData` in the New Experience.
 
 #### Shared Embedded Data block (above the Randomiser)
 
@@ -91,28 +93,41 @@ No code changes needed.
 | `llm_api_key` | `sk-...` | Your OpenAI API key |
 | `llm_model` | `gpt-4o` | Model name (see supported models below) |
 | `llm_max_turns` | `6` | Max exchanges per participant; blank = unlimited |
-| `llm_temperature` | `0.3` | 0–1; lower = more consistent behaviour |
+| `llm_temperature` | `0.3` | 0–1; lower = more consistent behaviour. Some newer models (gpt-5.x) do not support custom temperature and will ignore this value. |
 
-**Placeholder fields — declare blank, Randomiser overwrites:**
+**Placeholder fields — declare with value `init`, Randomiser overwrites:**
 
 | Field | Value |
 |---|---|
-| `condition` | *(blank)* |
+| `condition` | `init` |
+| `llm_assistant_id` | `init` |
 
-**Output fields — declare blank, widget writes to these:**
+**Output fields — declare with value `init`, widget overwrites at runtime:**
 
-| Field |
-|---|
-| `chat_conversation_json` |
-| `chat_model` |
-| `chat_assistant_id` |
-| `chat_thread_id` |
-| `chat_total_turns` |
-| `chat_system_prompt` |
-| `chat_timestamp` |
-| `chat_condition` |
-| `chat_mode` |
-| `chat_temperature` |
+These fields must be named with the `__js_` prefix in your Survey Flow. This is required by Qualtrics New Experience for JavaScript-writable embedded data. In your export they will appear as column names with the `__js_` prefix.
+
+| Survey Flow field name | Export column name | Contents |
+|---|---|---|
+| `__js_chat_conversation_json` | `__js_chat_conversation_json` | Full conversation JSON array |
+| `__js_chat_model` | `__js_chat_model` | Model used |
+| `__js_chat_assistant_id` | `__js_chat_assistant_id` | Prompt/assistant ID if used |
+| `__js_chat_thread_id` | `__js_chat_thread_id` | OpenAI thread/conversation ID |
+| `__js_chat_total_turns` | `__js_chat_total_turns` | Number of exchanges |
+| `__js_chat_system_prompt` | `__js_chat_system_prompt` | System prompt text used |
+| `__js_chat_timestamp` | `__js_chat_timestamp` | ISO timestamp of chat completion |
+| `__js_chat_condition` | `__js_chat_condition` | Condition label |
+| `__js_chat_mode` | `__js_chat_mode` | `completion` or `assistant` |
+| `__js_chat_temperature` | `__js_chat_temperature` | Temperature value used |
+
+Set all 10 output fields to `init` as their initial value. Qualtrics requires a non-blank value to convert a field from "Recipient" type (read-only) to "Custom" type (JavaScript-writable). The `init` value will be overwritten by the widget at runtime; any response where the chat was not completed will retain `init` as a useful data quality flag.
+
+If you want clean column names without the `__js_` prefix in your export, add a second Embedded Data block at the very end of your Survey Flow that pipes the values:
+
+```
+chat_conversation_json = ${e://Field/__js_chat_conversation_json}
+chat_model             = ${e://Field/__js_chat_model}
+```
+...and so on. This creates both the `__js_` columns and clean alias columns in the export.
 
 #### Randomiser block (below the shared block)
 
@@ -120,7 +135,7 @@ Each branch sets only the fields that vary by condition:
 
 | Field | Value |
 |---|---|
-| `condition` | Must match a `.prompt` filename exactly (e.g. `sycophantic`) |
+| `condition` | Must match a `.prompt` filename exactly (e.g. `pirate`) |
 
 Optionally override per-condition:
 
@@ -174,20 +189,23 @@ NEVER USE: [specific words or phrases to suppress]
 | `aristotle.prompt` | Responds as Aristotle — reasoning from first principles, virtue ethics framing |
 | `limerick.prompt` | Responds only in limericks — useful for verifying the widget is applying system prompts |
 
-The three novelty prompts (pirate, Aristotle, limerick) are included for testing purposes. Because they produce responses that are unmistakably different from the default, they make it immediately obvious whether the system prompt is being applied correctly. Use `limerick` or `pirate` to verify your setup before running real conditions.
+The three novelty prompts are included for testing purposes. Because they produce responses that are unmistakably different from the default, they make it immediately obvious whether the system prompt is being applied correctly. Use `limerick` or `pirate` to verify your setup before running real conditions.
 
 ---
 
-## Supported models (completion mode)
+## Supported models
 
 | Model | Notes |
 |---|---|
 | `gpt-4o` | Recommended — good instruction following, strong persona adherence |
 | `gpt-4.1` | Current OpenAI recommendation for instruction-following tasks |
+| `gpt-5.5` | Latest OpenAI model; does not support custom temperature |
 | `gpt-4-turbo` | Older but stable |
 | `grok-3` | xAI — requires xAI API key |
 | `grok-3-mini` | xAI — faster, lower cost |
 | `claude-sonnet-4-20250514` | Anthropic — requires Anthropic API key |
+
+**Note on temperature:** Newer OpenAI models (`gpt-5.x` and reasoning models) do not support the `temperature` parameter and will return an error if it is included. The widget automatically omits temperature for these models. Set `llm_temperature` in your Survey Flow as normal — it will be applied for models that support it and ignored for those that do not.
 
 Set `llm_model` in your Survey Flow to any of these. To add a new provider, add an entry to the `ENDPOINTS` object in `index.html`.
 
@@ -195,7 +213,7 @@ Set `llm_model` in your Survey Flow to any of these. To add a new provider, add 
 
 ## URL parameter reference
 
-All parameters travel in the iframe URL. Only short, always-present values go here — the system prompt travels via file fetch, not URL.
+All parameters travel in the iframe URL. Only short, always-present values go here — the system prompt travels via file fetch from GitHub Pages, not via URL.
 
 | Parameter | Qualtrics field | Always present? | Notes |
 |---|---|---|---|
@@ -205,6 +223,8 @@ All parameters travel in the iframe URL. Only short, always-present values go he
 | `turns` | `llm_max_turns` | Yes (blank = unlimited) | Max exchanges |
 | `temp` | `llm_temperature` | Yes (blank = 0.3) | Temperature |
 | `aid` | `llm_assistant_id` | Optional | For Responses API mode (see below) |
+
+> **Important:** Blank URL parameters corrupt the entire parameter string and strip all subsequent parameters. Never put a field in the URL if it could be blank in any condition. Model, condition, and key should always be set.
 
 ---
 
@@ -220,7 +240,7 @@ Note: OpenAI Prompt objects are scheduled for deprecation on November 30, 2026. 
 
 ## Data recorded per participant
 
-`chat_conversation_json` contains the full conversation as a JSON array:
+`__js_chat_conversation_json` contains the full conversation as a JSON array:
 
 ```json
 [
@@ -229,7 +249,9 @@ Note: OpenAI Prompt objects are scheduled for deprecation on November 30, 2026. 
 ]
 ```
 
-Additional fields recorded: `chat_model`, `chat_condition`, `chat_mode`, `chat_temperature`, `chat_total_turns`, `chat_timestamp`, `chat_system_prompt`, `chat_assistant_id`, `chat_thread_id`.
+Additional fields recorded: `__js_chat_model`, `__js_chat_condition`, `__js_chat_mode`, `__js_chat_temperature`, `__js_chat_total_turns`, `__js_chat_timestamp`, `__js_chat_system_prompt`, `__js_chat_assistant_id`, `__js_chat_thread_id`.
+
+Responses where the participant did not complete the chat will show `init` in all output fields — useful as a data quality filter.
 
 ### Parsing in R
 
@@ -238,7 +260,8 @@ library(tidyverse)
 library(jsonlite)
 
 df <- read_csv("qualtrics_export.csv") |>
-  mutate(chat = map(chat_conversation_json, ~ fromJSON(.x))) |>
+  filter(`__js_chat_conversation_json` != "init") |>
+  mutate(chat = map(`__js_chat_conversation_json`, ~ fromJSON(.x))) |>
   unnest_wider(chat)
 ```
 
@@ -248,7 +271,8 @@ df <- read_csv("qualtrics_export.csv") |>
 import pandas as pd, json
 
 df = pd.read_csv("qualtrics_export.csv")
-df["chat"] = df["chat_conversation_json"].apply(json.loads)
+df = df[df["__js_chat_conversation_json"] != "init"]
+df["chat"] = df["__js_chat_conversation_json"].apply(json.loads)
 turns = df["chat"].explode().apply(pd.Series)
 ```
 
@@ -291,14 +315,19 @@ async def chat(request: Request):
 | Symptom | Cause | Fix |
 |---|---|---|
 | Blue "Loading…" never goes away | Prompt file not found or wrong condition name | Check `prompts/{condition}.prompt` exists; condition name is case-sensitive |
-| Red error: "Prompt file not found" | Filename doesn't match condition value | Condition `sycophantic` requires `prompts/sycophantic.prompt` exactly |
-| Generic response ignoring persona | Prompt file empty or not loading | Visit `https://your-github-pages-url/prompts/{condition}.prompt` directly to confirm it loads |
+| Red error: "Prompt file not found" | Filename doesn't match condition value | Condition `pirate` requires `prompts/pirate.prompt` exactly |
+| Generic response ignoring persona | Prompt file not loading | Visit `https://your-github-pages-url/prompts/{condition}.prompt` directly to confirm it loads |
 | API 400: must provide model | `llm_model` empty or not arriving | Check `new URLSearchParams(...).get('model')` in browser console |
+| API 400: temperature not supported | Model does not support custom temperature (e.g. gpt-5.x) | Widget handles this automatically — no action needed |
 | API 401: invalid key | Wrong API key or wrong project | Confirm key in Survey Flow matches the project your model is under |
 | API 404: model not found | Invalid model name | Check spelling; see supported models table above |
-| Turns counter not incrementing | Finish & save not writing data | Check `chat_conversation_json` is declared in Survey Flow output fields |
-| `llm_assistant_id` empty in JS | Field not declared in shared Embedded Data block | Add `llm_assistant_id` as blank field in shared block above Randomiser |
+| Output fields blank in export | Fields declared as Recipient type, not Custom | Set all `__js_` output fields to `init` in Survey Flow to convert to Custom type |
+| Output fields show `init` in export | Participant did not complete chat, or JS not running | Check JS tab is pasted correctly; `init` is expected for incomplete responses |
+| `__js_` prefix missing from field names | Fields declared without prefix | All output fields must be named `__js_chat_*` in the Survey Flow |
+| Data appears in preview but not live survey | `setEmbeddedData` used instead of `setJSEmbeddedData` | Ensure JS tab uses `setJSEmbeddedData` throughout — `setEmbeddedData` is deprecated in New Experience |
+| Next button not hidden / survey not advancing | Button ID mismatch | Run `document.querySelectorAll('button').forEach(b => console.log(b.id))` in console to find correct button ID; update `hideNextButton()` in JS tab |
 | All conditions respond identically | System prompt not loading | Test condition prompt URL directly in browser |
+| URL parameters stripped | Blank parameter corrupting URL string | Ensure all URL parameters have non-blank values in every Survey Flow branch |
 
 ---
 
